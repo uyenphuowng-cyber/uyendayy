@@ -194,13 +194,17 @@ function parseMusic(raw){
     return {type:"yt",id,list,start,norm:"https://www.youtube.com/watch?"+(id?"v="+id:"")+(list?(id?"&":"")+"list="+list:"")}}
   if(h==="soundcloud.com"||h==="on.soundcloud.com"||h==="api.soundcloud.com"){if(u.pathname.length<2)return null;return {type:"sc",norm:u.origin+u.pathname}}
   if(h==="open.spotify.com"||h==="play.spotify.com"){const m=u.pathname.match(/\/(track|album|playlist|episode|show|artist)\/([A-Za-z0-9]+)/);if(!m)return null;return {type:"sp",kind:m[1],id:m[2],norm:`https://open.spotify.com/${m[1]}/${m[2]}`}}
+  if(h==="music.apple.com"||h==="embed.music.apple.com"){if(!/\/(album|playlist|song|station|music-video)\//.test(u.pathname))return null;return {type:"am",norm:"https://music.apple.com"+u.pathname+u.search,embed:"https://embed.music.apple.com"+u.pathname+u.search}}
+  if(h==="deezer.com"||h==="link.deezer.com"){const m=u.pathname.match(/\/(track|album|playlist|episode|show)\/(\d+)/);if(!m)return null;return {type:"dz",kind:m[1],id:m[2],norm:`https://www.deezer.com/${m[1]}/${m[2]}`}}
+  if(h==="mixcloud.com"){const parts=u.pathname.split("/").filter(Boolean);if(parts.length<2)return null;return {type:"mc",norm:"https://www.mixcloud.com/"+parts.slice(0,2).join("/")+"/",feed:"/"+parts.slice(0,2).join("/")+"/"}}
+  if(h==="vimeo.com"||h==="player.vimeo.com"){const m=u.pathname.match(/(\d{6,})/);if(!m)return null;return {type:"vm",id:m[1],norm:"https://vimeo.com/"+m[1]}}
   if(h==="drive.google.com"||h==="docs.google.com"){const m=u.pathname.match(/\/d\/([\w-]{10,})/);const id=m?m[1]:q.get("id");if(id)return {type:"audio",norm:`https://drive.google.com/uc?export=download&id=${id}`,host:"Google Drive"}}
   if(h==="dropbox.com"||h==="dl.dropboxusercontent.com"){q.delete("dl");q.set("raw","1");return {type:"audio",norm:u.toString(),host:"Dropbox"}}
   return {type:"audio",norm:u.toString(),guess:!AUDIO_EXT.test(u.pathname)};
 }
-const KIND_L={yt:"YouTube",sc:"SoundCloud",sp:"Spotify",audio:"Link nhạc"};
+const KIND_L={yt:"YouTube",sc:"SoundCloud",sp:"Spotify",am:"Apple Music",dz:"Deezer",mc:"Mixcloud",vm:"Vimeo",audio:"Link nhạc"};
 const kindOf=tr=>{const i=parseMusic(tr.url);if(!i)return "Tệp";if(i.file)return "Tệp";return i.host||KIND_L[i.type]};
-function defName(info){if(info.type==="yt")return info.id?"YouTube · "+info.id:"Danh sách YouTube";if(info.type==="sp")return "Spotify · "+info.kind;if(info.type==="sc")return decodeURIComponent(info.norm.split("/").filter(Boolean).slice(-1)[0]||"SoundCloud").replace(/-/g," ");
+function defName(info){try{if(info.type==="am"){const ps=new URL(info.norm).pathname.split("/").filter(Boolean);return ("Apple Music · "+decodeURIComponent(ps[ps.length-2]||ps[1]||"").replace(/-/g," ")).slice(0,60)}if(info.type==="dz")return "Deezer · "+info.kind+" "+info.id;if(info.type==="mc")return ("Mixcloud · "+decodeURIComponent(info.feed.split("/").filter(Boolean).pop()||"").replace(/-/g," ")).slice(0,60);if(info.type==="vm")return "Vimeo · "+info.id}catch(e){}if(info.type==="yt")return info.id?"YouTube · "+info.id:"Danh sách YouTube";if(info.type==="sp")return "Spotify · "+info.kind;if(info.type==="sc")return decodeURIComponent(info.norm.split("/").filter(Boolean).slice(-1)[0]||"SoundCloud").replace(/-/g," ");
   try{const p=decodeURIComponent(new URL(info.norm).pathname.split("/").filter(Boolean).pop()||"");return (p.replace(/\.[^.]+$/,"").replace(/[_-]+/g," ").trim()||info.host||"Link nhạc").slice(0,60)}catch(e){return "Link nhạc"}}
 async function jget(url){const ac=new AbortController();const t=setTimeout(()=>ac.abort(),6000);try{const r=await fetch(url,{signal:ac.signal});if(!r.ok)throw 0;return await r.json()}finally{clearTimeout(t)}}
 async function fetchTitle(info){const enc=encodeURIComponent(info.norm);
@@ -234,6 +238,10 @@ const EMB={el:null,id:null,type:null,info:null,mode:null,
       return `https://www.youtube-nocookie.com/embed/${i.id}?${q}${loop?`&loop=1&playlist=${i.id}`:""}`}
     if(i.type==="sc")return `https://w.soundcloud.com/player/?url=${encodeURIComponent(i.norm)}&auto_play=true&hide_related=true&show_comments=false&show_reposts=false&show_teaser=false&visual=false&color=%23a98bff`;
     if(i.type==="sp")return `https://open.spotify.com/embed/${i.kind}/${i.id}?utm_source=generator`;
+    if(i.type==="am")return i.embed;
+    if(i.type==="dz")return `https://widget.deezer.com/widget/auto/${i.kind}/${i.id}?autoplay=true&tracklist=${i.kind==="track"?"false":"true"}`;
+    if(i.type==="mc")return `https://www.mixcloud.com/widget/iframe/?hide_cover=1&mini=1&autoplay=1&feed=${encodeURIComponent(i.feed)}`;
+    if(i.type==="vm")return `https://player.vimeo.com/video/${i.id}?autoplay=1&dnt=1`;
     return "about:blank"},
   show(tr,info){const host=MP.ensure().querySelector("#mpFrame");
     if(this.id!==tr.id||!this.el||this.mode!==UI.snd.mode){this.stop();this.id=tr.id;this.type=info.type;this.info=info;this.mode=UI.snd.mode;MP.playing=false;
@@ -291,7 +299,7 @@ const MP={paused:false,playing:false,col:local.get("mpCol",false),pos:local.get(
     document.body.appendChild(p);this.bind(p);return p},
   bind(p){
     $("#mpPlay",p).onclick=()=>{const tr=curTrack();if(!tr)return;const i=parseMusic(tr.url)||{type:"audio"};
-      if(i.type==="sp"){toast("Với Spotify, bấm nút ▶ ngay trong khung Spotify");return}
+      if(["sp","am","dz","mc","vm"].includes(i.type)){toast(`Với ${KIND_L[i.type]}, bấm nút ▶ ngay trong khung trình phát`);return}
       const playing=this.isPlaying();this.paused=playing;
       if(i.type==="audio"&&SND.audio){if(playing)SND.audio.pause();else{if(!UI.snd.on){UI.snd.on=true;local.set("bgSnd",UI.snd)}SND.audio.play().catch(()=>{})}}
       else{if(playing)EMB.pause();else EMB.play();this.playing=!playing}
@@ -315,19 +323,19 @@ const MP={paused:false,playing:false,col:local.get("mpCol",false),pos:local.get(
   isPlaying(){const tr=curTrack();if(!tr||!UI.snd.on)return false;const i=parseMusic(tr.url)||{type:"audio"};if(i.type==="audio")return !!(SND.audio&&SND.audio._id===tr.id&&!SND.audio.paused);return this.paused?false:this.playing},
   place(){const p=$("#mplayer");if(!p)return;const pos=this.pos||{};const fr=$("#mpFrame",p);const t=EMB.type;
     p.style.width=pos.w?pos.w+"px":"";
-    const def=t==="yt"?Math.round(((pos.w||320)-2)*9/16):t==="sc"?166:t==="sp"?(EMB.info&&EMB.info.kind==="track"?152:352):0;
+    const def=t==="yt"?Math.round(((pos.w||320)-2)*9/16):t==="sc"?166:t==="sp"?(EMB.info&&EMB.info.kind==="track"?152:352):t==="am"?(/[?&]i=/.test(EMB.info&&EMB.info.embed||"")?175:450):t==="dz"?(EMB.info&&EMB.info.kind==="track"?150:300):t==="mc"?120:t==="vm"?Math.round(((pos.w||320)-2)*9/16):0;
     fr.style.height=t?(pos.fh||def)+"px":"";
     if(innerWidth>720&&pos.x!=null){const r=p.getBoundingClientRect();p.style.left=clamp(pos.x,0,Math.max(0,innerWidth-r.width))+"px";p.style.top=clamp(pos.y,0,Math.max(0,innerHeight-Math.min(r.height,60)))+"px";p.style.bottom="auto"}
     else{p.style.left=p.style.top=p.style.bottom=""}},
   render(){const s=UI.snd;const tr=curTrack();const p=this.ensure();const show=!!(s.on&&tr);const wasHidden=p.hidden;p.hidden=!show;if(!show)return;
     const i=parseMusic(tr.url)||{type:"audio"};const n=s.tracks.indexOf(tr)+1;
     $("#mpT",p).textContent=tr.name;$("#mpT",p).title=tr.name;$("#mpS",p).textContent=`${kindOf(tr)} · bài ${n}/${s.tracks.length}${s.music?" · kèm âm thanh nền":""}`;
-    const pl=this.isPlaying();const b=$("#mpPlay",p);b.innerHTML=ic(pl?"pause":"play");b.title=pl?"Tạm dừng":"Phát";b.style.visibility=i.type==="sp"?"hidden":"";
+    const pl=this.isPlaying();const b=$("#mpPlay",p);b.innerHTML=ic(pl?"pause":"play");b.title=pl?"Tạm dừng":"Phát";b.style.visibility=["sp","am","dz","mc","vm"].includes(i.type)?"hidden":"";
     const one=s.tracks.length<2;$("#mpPrev",p).disabled=one;$("#mpNext",p).disabled=one;
     const m=$("#mpMode",p);const seq=s.mode==="seq";m.innerHTML=ic(seq?"seq":"rep1");m.title=seq?"Đang phát lần lượt — bấm để lặp 1 bài":"Đang lặp 1 bài — bấm để phát lần lượt";m.setAttribute("aria-pressed",seq);
     const v=$("#mpVol",p);if(document.activeElement!==v)v.value=s.vol;
     $("#mpSeek",p).hidden=i.type!=="audio";
-    const note=$("#mpNote",p);const msg=i.type==="sp"?"Spotify chỉ cho phát bằng nút ▶ trong khung (chưa đăng nhập Spotify thì chỉ nghe được 30 giây).":(i.type!=="audio"&&!pl&&!this.paused)?"Nếu nhạc chưa chạy, bấm ▶ một lần — trình duyệt cần bạn bấm trước khi phát.":"";
+    const note=$("#mpNote",p);const msg=i.type==="sp"?"Spotify chỉ cho phát bằng nút ▶ trong khung (chưa đăng nhập Spotify thì chỉ nghe được 30 giây).":["am","dz"].includes(i.type)?`${KIND_L[i.type]}: bấm ▶ trong khung; chưa đăng nhập thì chỉ nghe được đoạn ngắn.`:["mc","vm"].includes(i.type)?`${KIND_L[i.type]}: bấm ▶ trong khung để phát.`:(i.type!=="audio"&&!pl&&!this.paused)?"Nếu nhạc chưa chạy, bấm ▶ một lần — trình duyệt cần bạn bấm trước khi phát.":"";
     note.hidden=!msg;note.textContent=msg;
     p.classList.toggle("col",!!this.col);this.place();this.tick();
     if(wasHidden&&!RM())p.animate([{opacity:0,transform:"translateY(10px)"},{opacity:1,transform:"none"}],{duration:220,easing:"ease-out"})},
@@ -359,7 +367,7 @@ const _sndPopover12=sndPopover;
 sndPopover=function(anchor){_sndPopover12(anchor);const m=$$(".popmenu").pop();const box=m&&$(".sndpop",m);if(!box)return;const s=UI.snd;
   $$("[data-tr]",box).forEach(b=>{const t=s.tracks.find(x=>x.id===b.dataset.tr);if(t)b.insertAdjacentHTML("beforeend",`<span class="src-k">${esc(kindOf(t))}</span>`)});
   const trkField=$(".trk",box)&&$(".trk",box).closest(".field");
-  const html=`<div class="field"><label for="sLink">Link nhạc</label><div class="sndlink"><input class="input" id="sLink" type="url" inputmode="url" placeholder="Dán link YouTube, SoundCloud, Spotify, .mp3…" autocomplete="off"><button class="btn primary" id="sLinkGo">Phát</button></div><small class="muted" style="font-size:12px">Hoặc kéo link / tệp nhạc từ nơi khác thả vào nút loa hay vào bảng này.</small></div>
+  const html=`<div class="field"><label for="sLink">Link nhạc</label><div class="sndlink"><input class="input" id="sLink" type="url" inputmode="url" placeholder="Dán link YouTube, Spotify, SoundCloud, Apple Music, Deezer, Mixcloud, .mp3…" autocomplete="off"><button class="btn primary" id="sLinkGo">Phát</button></div><small class="muted" style="font-size:12px">Hoặc kéo link / tệp nhạc từ nơi khác thả vào nút loa hay vào bảng này.</small></div>
     ${s.tracks.length?`<div class="field"><span>Khi hết bài</span><div class="seg mode"><button data-pmode="one" aria-pressed="${s.mode!=="seq"}">Lặp lại bài</button><button data-pmode="seq" aria-pressed="${s.mode==="seq"}">Phát bài tiếp</button></div></div>`:""}`;
   if(trkField)trkField.insertAdjacentHTML("afterend",html);else box.insertAdjacentHTML("beforeend",html);
   const inp=$("#sLink",box);const go=async()=>{const v=inp.value.trim();if(!v){inp.focus();return}if(await addMusicLinks(v.split(/\s+/))){closePop();sndPopover(anchor)}};

@@ -1183,10 +1183,27 @@ async function openCalendarHubOld(){
    CÔNG THỨC VIẾT TAY (KaTeX → MathML, font chữ tay)
    ===================================================================== */
 function ensureKatex(){return window.katex?Promise.resolve(window.katex):loadScript("https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js").then(()=>window.katex)}
+/* AI hay bọc công thức trong $…$, $$…$$, \(…\) hoặc thêm \displaystyle → làm sạch trước khi vẽ */
+function texClean(t){
+  let s=String(t||"").replace(/\u00a0/g," ").trim();let m;const ds=/^\\displaystyle\b/.test(s);s=s.replace(/^(\\displaystyle\b\s*)+/,"");
+  for(let k=0;k<3;k++){
+    if((m=s.match(/^\$\$([\s\S]*)\$\$$/))&&!m[1].includes("$$"))s=m[1].trim();
+    else if(m=s.match(/^\\\[([\s\S]*)\\\]$/))s=m[1].trim();
+    else if(m=s.match(/^\\\(([\s\S]*)\\\)$/))s=m[1].trim();
+    else if(m=s.match(/^\$([^$]*)\$$/))s=m[1].trim();
+    else if(m=s.match(/^((?:\\(?:displaystyle|textstyle|large|Large)\s*)+)\$+([\s\S]*?)\$+$/))s=m[2].trim();
+    else break}
+  s=s.replace(/\\(displaystyle|textstyle|scriptstyle)\b\s*/g,"").replace(/\\\(|\\\)|\\\[|\\\]/g,"");
+  if(s.includes("$")){/* lẫn chữ và công thức: phần ngoài $ thành chữ thường */
+    s=s.split(/\${1,2}/).map((p,i)=>{if(i%2)return p;const q=p.trim();if(!q)return "";if(/^[\s=+\-−,;:.()<>≈→⇒0-9]*$/.test(q))return p;return `\\text{${p.replace(/[{}\\$#%&_^~]/g,"")}}`}).join(" ")}
+  s=s.trim();return ds&&s?"\\displaystyle "+s:s}
+function texPlain(s){return String(s).replace(/\\(cdot|times)/g,c=>c.includes("cdot")?"·":"×").replace(/\\(?:d?frac)\{([^{}]*)\}\{([^{}]*)\}?/g,"$1/$2").replace(/\\(text|mathrm|overline|bar)\{([^{}]*)\}/g,"$2").replace(/\\([a-zA-Z]+)/g,(m,w)=>({approx:"≈",le:"≤",ge:"≥",ne:"≠",pi:"π",Omega:"Ω",omega:"ω",mu:"µ",alpha:"α",beta:"β",theta:"θ",Delta:"Δ",infty:"∞",to:"→",Rightarrow:"⇒",pm:"±",sqrt:"√",quad:"  ",qquad:"   "})[w]||"").replace(/[{}]/g,"").replace(/\\[,;! ]/g," ")}
 function tex(t,display,bare){
-  const src=String(t||"").trim();
+  const src=texClean(t);
   if(!window.katex)return `<span class="hw${display&&!bare?" hwd":""}" data-tex="${esc(src)}" data-d="${display?1:0}" data-b="${bare?1:0}">${esc(src)}</span>`;
-  try{return `<span class="hw${display&&!bare?" hwd":""}">${katex.renderToString(src,{output:"mathml",throwOnError:false,displayMode:!!display,strict:false})}</span>`}catch(e){return `<span class="hw">${esc(src)}</span>`}
+  const cls=`hw${display&&!bare?" hwd":""}`;
+  try{return `<span class="${cls}">${katex.renderToString(src,{output:"htmlAndMathml",throwOnError:true,displayMode:!!display,strict:false})}</span>`}
+  catch(e){/* không vẽ được thì vẫn viết tay dạng chữ, không hiện mã đỏ */return `<span class="${cls} hw-plain">${esc(texPlain(src))}</span>`}
 }
 function upgradeMath(root){if(!window.katex||!root)return;$$("[data-tex]",root).forEach(el=>{const w=document.createElement("span");w.innerHTML=tex(el.dataset.tex,el.dataset.d==="1",el.dataset.b==="1");el.replaceWith(w.firstChild)})}
 new MutationObserver(ms=>{if(!window.katex)return;for(const m of ms)m.addedNodes.forEach(n=>{if(n.nodeType===1&&(n.matches("[data-tex]")||n.querySelector("[data-tex]")))upgradeMath(n.parentNode||n)})}).observe(document.body,{childList:true,subtree:true});
@@ -1436,7 +1453,7 @@ const VB={
  equation(g,W,H,v,C,host){const box=document.createElement("div");box.className="vmath";box.style.color=C.ink;const steps=(v.steps||[]).slice(0,6);box.innerHTML=steps.map(s=>`<div class="ln">${tex("\\displaystyle "+s,false,true)}</div>`).join("");host.appendChild(box);
    const lns=$$(".ln",box);const W2=W,ring=ink(g,"M0 0",{c:C.red,w:5});let placed=false;const note=wtext(g,W/2,H*.84,v.note||"",{s:Math.min(W,H)*.045,c:C.or,a:"middle"});
    return p=>{const n=lns.length||1;lns.forEach((l,i)=>{const q=seg(p,i/n*.75,(i+1)/n*.75);l.style.clipPath=`inset(-10% ${100-q*100}% -10% 0)`});
-     if(!placed&&lns.length>1){const sr=host.getBoundingClientRect(),lr=(lns[lns.length-1].querySelector("math")||lns[lns.length-1].firstElementChild).getBoundingClientRect();if(sr.width&&lr.width){const sx=W2/sr.width,sy=H/sr.height;const x0=(lr.left-sr.left)*sx-24,x1=(lr.right-sr.left)*sx+24,y0=(lr.top-sr.top)*sy-12,y1=(lr.bottom-sr.top)*sy+12,cx=(x0+x1)/2,cy=(y0+y1)/2,rx=(x1-x0)/2,ry=(y1-y0)/2;const pts=[];for(let a=0;a<=1.08;a+=.04){const t=-Math.PI*.6+a*Math.PI*2;pts.push([cx+Math.cos(t)*rx,cy+Math.sin(t)*ry])}ring.el.setAttribute("d",wobble(pts,3,5));placed=true}}
+     if(!placed&&lns.length>1){const svgE=g.ownerSVGElement,lr=(lns[lns.length-1].querySelector(".katex-html")||lns[lns.length-1].querySelector("math")||lns[lns.length-1].firstElementChild).getBoundingClientRect();const M=svgE&&svgE.getScreenCTM&&svgE.getScreenCTM();if(M&&lr.width){const iv=M.inverse();const P1=new DOMPoint(lr.left,lr.top).matrixTransform(iv),P2=new DOMPoint(lr.right,lr.bottom).matrixTransform(iv);const x0=P1.x-24,x1=P2.x+24,y0=P1.y-12,y1=P2.y+12,cx=(x0+x1)/2,cy=(y0+y1)/2,rx=(x1-x0)/2,ry=(y1-y0)/2;const pts=[];for(let a=0;a<=1.08;a+=.04){const t=-Math.PI*.6+a*Math.PI*2;pts.push([cx+Math.cos(t)*rx,cy+Math.sin(t)*ry])}ring.el.setAttribute("d",wobble(pts,3,5));placed=true}}
      ring.set(lns.length>1?seg(p,.78,.92):0);note.set(seg(p,.82,1))}},
  gate(g,W,H,v,C){const type=(v.gate||"AND").toUpperCase(),m=Math.min(W,H),s=m*.42,wide=W>H;const x=W*(wide?.32:.5)-s/2,y=H*(wide?.5:.4)-s/2;const G=gateAt(g,GATES[type]?type:"AND",x,y,s,C.ink);
    const wA=ink(g,`M${G.inA[0]-m*.18} ${G.inA[1]}H${G.inA[0]}`,{c:C.ink,w:4}),wB=G.one?null:ink(g,`M${G.inB[0]-m*.18} ${G.inB[1]}H${G.inB[0]}`,{c:C.ink,w:4}),wY=ink(g,`M${G.out[0]} ${G.out[1]}H${G.out[0]+m*.16}`,{c:C.ink,w:4});
@@ -3507,6 +3524,387 @@ const _bgPickerHTML14=bgPickerHTML;bgPickerHTML=function(){return _bgPickerHTML1
 const _bindBgPicker14=bindBgPicker;bindBgPicker=function(root,after){_bindBgPicker14(root,after);const g=$("[data-glass]",root);if(g)g.onchange=()=>{UI.glass=g.checked;local.set("glass",UI.glass);applyGlass();applyLayout&&applyLayout()}};
 
 /* =====================================================================
+   v13 — SỔ HỌC (Nguồn · Trò chuyện · Studio) ĐỒNG BỘ THEME + ICON · STUDIO TẠO NHANH HƠN
+   ===================================================================== */
+/* ---------- icon tiêu đề cột ---------- */
+const PANE_IC={paneSrc:"file",paneChat:"chat",paneStudio:"spark"};
+paneHead=function(id,title,coll,extra=""){return `<div class="pane-h" data-ph="${id}"><h2><span class="ph-ic" aria-hidden="true">${ic(PANE_IC[id]||"spark")}</span>${title}</h2>${extra}<span class="vtitle">${title}</span><div class="pane-tools">${coll?`<button class="ghost ic lay hide-coll" data-coll="${id}" aria-label="Thu nhỏ ${title}" title="Thu nhỏ">${ic("min")}</button>`:""}<button class="ghost ic lay" data-max="${id}" aria-label="Phóng to ${title}" title="Phóng to / thu về">${ic("expand")}</button></div></div>`};
+/* ---------- biểu tượng sổ học đổi màu theo theme ---------- */
+const GL_HEX=["#2b6f4f","#7ee0a7","#7a3d1c","#f4a26a","#244a7a","#8cc0ff","#5a2f6e","#d6a4ff","#6e5a1c","#f2d36b"];
+const _glyph15=glyph;glyph=function(id,size){let s=_glyph15(id,size);if(UI.bg&&UI.bg.sync){GL_HEX.forEach((h,i)=>{s=s.split(h).join(i%2?"var(--gl-fg)":"var(--gl-bg)")})}return s};
+/* ---------- màu icon các ô Studio lấy từ bảng màu cảnh nền ---------- */
+const TILE_MIX=["var(--accent)","var(--sig)","color-mix(in srgb,var(--accent) 55%,var(--sig))","color-mix(in srgb,var(--tint) 70%,#fff)","color-mix(in srgb,var(--sig) 60%,#fff)","color-mix(in srgb,var(--accent) 60%,#fff)"];
+
+/* =====================================================================
+   STUDIO NHANH HƠN
+   - đọc ít nguồn hơn với các dạng ngắn (thẻ nhớ, quiz, bảng…)
+   - dùng mô hình nhanh cho dạng ngắn; Gemini: suy nghĩ mức thấp
+   - viết dần và hiện % tiến độ thay vì chờ im lặng
+   - tải sẵn thư viện 3D, công thức khi mở bài học
+   ===================================================================== */
+UI.speed=local.get("studioSpeed","balanced");
+const SPEED={fast:"Nhanh nhất",balanced:"Cân bằng",quality:"Chất lượng cao"};
+const GEN_BUDGET={flash:45000,quiz:50000,table:45000,info:45000,yt:30000,mindmap:60000,report:110000,slides:100000,video:90000,audio:90000};
+const GEN_QUICK=new Set(["flash","quiz","table","info","yt","mindmap"]);
+const GEN_EST={flash:3500,quiz:5000,table:3500,info:2600,yt:2500,mindmap:3200,report:9000,slides:9000,video:11000,audio:9000};
+UI.genProg=new Map();
+function tierFor(k){if(UI.speed==="quality")return "default";if(UI.speed==="fast")return "quick";return GEN_QUICK.has(k)?"quick":"default"}
+function looseJSON(t){let s=String(t||"").trim().replace(/^```(?:json)?\s*/i,"").replace(/```\s*$/,"");try{return JSON.parse(s)}catch(e){}const a=s.indexOf("{"),b=s.lastIndexOf("}");if(a>=0&&b>a){try{return JSON.parse(s.slice(a,b+1))}catch(e){}}return null}
+async function genJSON(prompt,o,onChars){
+  /* viết có luồng để hiện tiến độ; nếu JSON hỏng thì thử lại bằng chế độ JSON */
+  if(P.local){return P.sample.json(prompt,{...o,onText:({text})=>onChars&&onChars(text.length)})}
+  try{const r=await P.sample(prompt+"\n\nCHỈ trả lời bằng đúng một đối tượng JSON hợp lệ, không có chữ hay ``` nào khác.",{...o,onText:({text})=>onChars&&onChars(text.length)});const j=looseJSON(r&&r.text!=null?r.text:r);if(j)return j}catch(e){if(e&&(e.code==="cancelled"||e.code==="not_granted"||e.code==="rate_limited"))throw e}
+  return P.sample.json(prompt,o)}
+function progPaint(id){const p=UI.genProg.get(id);const el=$(`#studioBody [data-art="${id}"]`);if(!el||!p)return;const sm=$("small",el);const pct=Math.min(97,Math.round(p.chars/p.est*100));
+  if(sm)sm.innerHTML=p.chars?`Đang viết… ${pct}% <i class="gprog"><i style="width:${pct}%"></i></i>`:`${p.stage||"Đang đọc nguồn…"} <i class="gprog wait"><i></i></i>`}
+generate=async function(k,cfg){
+  if(!UI.cur)return;
+  if(!P.sample){toast("Studio cần trợ lý AI: hãy mở trang trong ứng dụng Claude hoặc thêm API key");return}
+  const t0=performance.now();const id=mkid("art");const nb=UI.cur.id;const sp=spec(k,cfg);
+  UI.genProg.set(id,{chars:0,est:GEN_EST[k]||6000,stage:"Đang đọc nguồn…"});
+  await Store.put(id,{type:"art",nb,kind:k,title:"",status:"pending",cfg,created:Date.now()});
+  if(innerWidth<=1100)mobPane("paneStudio");
+  try{
+    const ctx=await sourceContext(cfg.srcIds||null,GEN_BUDGET[k]||80000);
+    if(!ctx.labels.length){await Store.del(id);UI.genProg.delete(id);toast("Thêm hoặc chọn ít nhất một nguồn trước");return}
+    const pg=UI.genProg.get(id);pg.stage="AI đang soạn…";progPaint(id);
+    const prompt=`${rulesFor()}\n\nNGÔN NGỮ ĐẦU RA: ${sp.L}. ĐỘ DÀI: ${sp.len}.\nMỨC ĐỘ: ${sp.D}${cfg.desc?"\nYÊU CẦU CỦA NGƯỜI HỌC: "+cfg.desc:""}\nNHIỆM VỤ: ${sp.task}\nTrường "cite" là mảng số thứ tự nguồn [n] đã dùng.\nTrả về CHỈ một JSON đúng mẫu:\n${sp.schema}\n\nNGUỒN:\n${ctx.text}`;
+    let last=0;const data=await genJSON(prompt,{modelTier:tierFor(k),fast:UI.speed!=="quality",...(ctx.images.length?{images:ctx.images}:{})},n=>{pg.chars=n;const now=performance.now();if(now-last>250){last=now;progPaint(id)}});
+    if(!data||typeof data!=="object")throw {code:"invalid_json"};
+    const art={type:"art",nb,kind:k,title:String(data.title||KLABEL[k]).slice(0,120),status:"done",cfg,data,srcLabels:ctx.labels,created:Date.now(),genMs:Math.round(performance.now()-t0)};
+    const sz=JSON.stringify(art).length;if(sz>240000)throw {code:"too_big"};
+    await Store.put(id,art);UI.genProg.delete(id);toast(`Đã tạo ${KLABEL[k]} · ${(art.genMs/1000).toFixed(1)} giây`);
+  }catch(e){console.warn(e);UI.genProg.delete(id);await Store.put(id,{type:"art",nb,kind:k,title:KLABEL[k],status:"error",err:e&&e.code==="too_big"?"Nội dung quá lớn, chọn độ dài ngắn hơn":aiErr(e),cfg,created:Date.now()})}
+};
+const _renderStudio15=renderStudio;renderStudio=function(...a){const r=_renderStudio15.apply(this,a);const b=$("#studioBody");if(!b)return r;
+  $$(".tile",b).forEach((t,i)=>t.style.setProperty("--cs",TILE_MIX[i%TILE_MIX.length]));UI.genProg.forEach((p,id)=>progPaint(id));
+  const ph=$("#paneStudio .pane-h");if(ph&&!$("#spd",ph)){const bt=document.createElement("button");bt.className="ghost spd-btn";bt.id="spd";bt.title="Tốc độ tạo nội dung Studio";bt.innerHTML=`${ic("spark")}<span>${SPEED[UI.speed]}</span>`;const tools=$(".pane-tools",ph);ph.insertBefore(bt,tools);
+    bt.onclick=e=>{e.stopPropagation();const m=popMenu(bt,`<div class="who">Tốc độ tạo nội dung Studio</div>${[["fast","Nhanh nhất","mô hình nhanh cho mọi loại, đọc ít nguồn hơn"],["balanced","Cân bằng","thẻ nhớ, quiz, bảng… dùng mô hình nhanh; slide, video, báo cáo dùng mô hình chính"],["quality","Chất lượng cao","mô hình chính, suy nghĩ kỹ — chậm hơn"]].map(([k,l,d])=>`<button data-spd="${k}"><span style="display:grid"><b style="font-weight:600">${l}${UI.speed===k?" ✓":""}</b><small class="muted" style="white-space:normal">${d}</small></span></button>`).join("")}`);
+      $$("[data-spd]",m).forEach(x=>x.onclick=()=>{UI.speed=x.dataset.spd;local.set("studioSpeed",UI.speed);try{if(window.SOHOC)SOHOC.LS.set("speed",UI.speed)}catch(_){}bt.querySelector("span").textContent=SPEED[UI.speed];toast("Tốc độ Studio: "+SPEED[UI.speed])})}}
+  return r};
+/* tải sẵn thư viện khi mở bài học, để mở Mô hình 3D / slide công thức gần như tức thì */
+const _openNotebook15=openNotebook;openNotebook=function(...a){const r=_openNotebook15.apply(this,a);const idle=window.requestIdleCallback||(f=>setTimeout(f,1200));
+  idle(()=>{ensureThree().catch(()=>{});ensureKatex().catch(()=>{});if(UI.srcs&&UI.srcs.length)sourceContext(null,60000).catch(()=>{})},{timeout:3000});return r};
+try{if(window.SOHOC)SOHOC.LS.set("speed",UI.speed)}catch(e){}
+/* ---------- thanh tiện ích: nút Nhạc để dán link / mở trình phát nhanh ---------- */
+RAIL_ALL.music=["Nhạc & âm thanh nền","music"];
+{const d=UI.dash;if(d&&d.rail&&!d.rail.order.includes("music")){d.rail.order.splice(Math.max(0,d.rail.order.indexOf("wdg")+1),0,"music")}}
+const _railAct15=railAct;railAct=function(k,btn){if(k==="music"){hideTip();closeFly();sndPopover(btn);const place=()=>{const m=$$(".popmenu").pop();if(!m)return;const r=btn.getBoundingClientRect();m.style.left=Math.min(innerWidth-m.offsetWidth-8,r.right+10)+"px";m.style.top=Math.max(8,Math.min(innerHeight-m.offsetHeight-8,r.top-20))+"px"};place();requestAnimationFrame(place);setTimeout(place,60);return}return _railAct15(k,btn)};
+setTimeout(()=>renderRail(),60);
+
+/* =====================================================================
+   v14 — SLIDE KIỂU NOTEBOOKLM: dải thu nhỏ, sửa từng slide bằng lời, tạo lại bộ slide,
+         giao diện bản vẽ kỹ thuật, TRÌNH CHIẾU NHƯ VIDEO (giọng đọc, phụ đề, tua, âm lượng, hình vẽ dần)
+   + NHIỀU MẪU MÀU GIAO DIỆN VÀ BỘ CHỦ ĐỀ
+   ===================================================================== */
+const SL_W=1280,SL_H=720;
+const SL_THEMES={blue:"Bản vẽ kỹ thuật",chalk:"Bảng phấn",paper:"Giấy viết tay",sync:"Theo giao diện"};
+UI.slTheme=local.get("slTheme","blue");
+function slPal(th){if(th==="blue")return {ink:"#e8f0f6",soft:"#8fa6b6",blue:"#6fd3e6",or:"#f2c94c",red:"#e58ad9",green:"#7fe0a4",paper:"#1f2a33",fill:"rgba(111,211,230,.10)"};
+  if(th==="chalk")return vpal(true);if(th==="paper")return vpal(false);
+  return {ink:mmColor("var(--ink)"),soft:mmColor("var(--muted)"),blue:mmColor("var(--sig)"),or:mmColor("var(--accent)"),red:mmColor("var(--bad)"),green:mmColor("var(--ok)"),paper:mmColor("var(--panel2)"),fill:"rgba(127,127,127,.08)"}}
+/* mở rộng lệnh tạo slide: thêm hình vẽ động (dùng chung bộ vẽ của bài giảng video) và thẻ ý chính */
+{const _spec16=spec;spec=function(k,cfg){const s=_spec16(k,cfg);if(k==="slides"&&s&&s.task){s.task=s.task.replace(/hoặc "none"\./,`hoặc "scene" (kèm "scene":{"type":…} để VẼ SƠ ĐỒ ĐỘNG bằng một trong các mẫu sau:\n${VSCENES}\n), hoặc "cards" (kèm "cards":[{"icon":"gear|clock|chip|chart|bolt|book|idea|warn|loop|wave","title":"…","text":"…"}] — 2–4 thẻ ý chính, hợp cho slide tổng kết), hoặc "none". Slide đầu là slide tiêu đề ("layout":"title", "bullets" là 1 dòng phụ đề). Ưu tiên "scene" khi nói về cổng logic, mạch chốt, flip-flop, giản đồ thời gian, mạch điện, bộ đếm, thanh ghi dịch, đồ thị.`)}return s}}
+const CARD_IC={gear:'<circle cx="24" cy="24" r="7"/><path d="M24 6v6M24 36v6M6 24h6M36 24h6M11 11l4 4M33 33l4 4M37 11l-4 4M15 33l-4 4"/>',clock:'<path d="M4 34h6V14h8v20h8V14h8v20h10"/>',chip:'<rect x="13" y="13" width="22" height="22" rx="3"/><path d="M18 13V6M24 13V6M30 13V6M18 42v-7M24 42v-7M30 42v-7M13 18H6M13 24H6M13 30H6M42 18h-7M42 24h-7M42 30h-7"/>',chart:'<path d="M6 40l10-12 8 6 16-20"/><path d="M32 14h8v8"/>',bolt:'<path d="M27 4L11 27h11l-3 17 17-24H25z"/>',book:'<path d="M8 10c6-3 12-3 16 1 4-4 10-4 16-1v28c-6-3-12-3-16 1-4-4-10-4-16-1z"/><path d="M24 11v28"/>',idea:'<path d="M17 30c-4-3-6-7-6-11a13 13 0 0 1 26 0c0 4-2 8-6 11v5H17z"/><path d="M19 41h10"/>',warn:'<path d="M24 6l19 34H5z"/><path d="M24 19v10M24 34v.5"/>',loop:'<path d="M14 16a12 12 0 1 1-4 9"/><path d="M6 14l4 2 2-4"/>',wave:'<path d="M4 24c4-10 8-10 12 0s8 10 12 0 8-10 12 0"/>'};
+function slIsTitle(s,i){return s.layout==="title"||(i===0&&(!s.visual||s.visual==="none")&&(s.bullets||[]).length<=2)}
+function slVisKind(s){if(s.visual==="scene"&&s.scene&&s.scene.type&&VB[s.scene.type])return "scene";if(s.visual==="cards"&&Array.isArray(s.cards)&&s.cards.length)return "cards";if(s.visual&&FIG[s.visual])return "fig";if(s.visual==="table"&&s.table&&s.table.headers)return "table";if(s.visual==="math"&&Array.isArray(s.math)&&s.math.length)return "math";if(s.visual==="formula"&&s.formula)return "formula";return null}
+function slideHTML(s,i,deck,a,th){const L=a.srcLabels;const t=esc(s.title||"");const k=slVisKind(s);const foot=`<span class="sl-pg">${i+1}</span><span class="sl-mark">${esc(deck.title||a.title||"")} · Sổ Học</span>`;
+  if(slIsTitle(s,i))return `<div class="sl sl-title"><div class="sl-decor" data-decor></div><div class="sl-tbox"><h1 class="rv">${t}</h1>${(s.bullets||[]).length?`<p class="rv">${(s.bullets||[]).map(b=>mdInline(b,L)).join("<br>")}</p>`:""}</div><span class="sl-tag rv">Tài liệu tham khảo trực quan | ${esc(deck.title||a.title||"")}</span>${foot}</div>`;
+  if(k==="cards")return `<div class="sl sl-cards"><h2 class="rv">${t}</h2><div class="sl-cardl">${s.cards.slice(0,4).map(c=>`<div class="sl-card rv"><div class="ci"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${CARD_IC[c.icon]||CARD_IC.idea}</svg></div><div><b>${esc(c.title||"")}</b><p>${mdInline(c.text||"",L)}</p></div></div>`).join("")}</div>${foot}</div>`;
+  const ul=`<ul>${(s.bullets||[]).map(b=>`<li class="rv">${mdInline(b,L)}</li>`).join("")}</ul>`;
+  if(k)return `<div class="sl sl-split ${k==="scene"?"wide":""}"><div class="sl-col"><h2 class="rv">${t}</h2>${ul}<div class="sl-cite">${citeChips(s.cite,L)}</div></div><div class="sl-vis" data-vis></div>${foot}</div>`;
+  return `<div class="sl sl-text"><h2 class="rv">${t}</h2>${ul}<div class="sl-cite">${citeChips(s.cite,L)}</div>${foot}</div>`}
+/* gắn hình: trả về hàm vẽ theo tiến độ p (0→1) */
+function slMount(frame,s,i,th){const fns=[];const C=slPal(th);
+  const dc=$("[data-decor]",frame);if(dc){const svg=sv("svg",{viewBox:"0 0 640 720",preserveAspectRatio:"xMaxYMid slice"});dc.appendChild(svg);const g=sv("g",{opacity:.55},svg);const gs=[];
+    [["NAND",330,70],["NAND",330,250],["NOR",470,160],["AND",330,430],["XOR",470,520],["NOT",200,340]].forEach(([ty,x,y],k)=>{try{gs.push(gateAt(g,ty,x,y,110,C.blue,k))}catch(e){}});
+    const w=[["M200 60H330M200 120H330","M200 240H330M200 300H330"],["M440 125H470M440 305H470"],["M590 215H640M590 575H640"]].flat().map(d=>ink(g,d,{c:C.blue,w:3}));
+    fns.push(p=>{gs.forEach((G,k)=>{try{G.set&&G.set(seg(p,k*.08,.5+k*.08))}catch(e){}});w.forEach((x,k)=>x.set(seg(p,.3+k*.06,.8)))})}
+  const el=$("[data-vis]",frame);if(!el)return fns.length?p=>fns.forEach(f=>f(p)):null;const k=slVisKind(s);
+  if(k==="scene"){const wide=frame.querySelector(".sl-split.wide");const W=wide?820:700,H=600;const svg=sv("svg",{viewBox:`0 0 ${W} ${H}`,preserveAspectRatio:"xMidYMid meet"});el.appendChild(svg);const g=sv("g",{},svg);
+    let upd=null;try{upd=VB[s.scene.type](g,W,H,s.scene,C,el)}catch(e){console.warn(e)}if(upd)fns.push(p=>{try{upd(p)}catch(e){}})}
+  else{if(k==="fig")el.innerHTML=FIG[s.visual]();else if(k==="table")el.innerHTML=`<table class="sl-tt"><tr>${s.table.headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr>${(s.table.rows||[]).slice(0,9).map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table>`;
+    else if(k==="math"){el.innerHTML=sheet(s.math);hwFit(el)}else if(k==="formula")el.innerHTML=/\n|;|\bmodule\b|\bassign\b|<=|==|\bif\s*\(/.test(String(s.formula))?`<pre class="sl-code">${esc(s.formula)}</pre>`:`<div class="sl-formula">${tex(s.formula,true,true)}</div>`;
+    fns.push(p=>{el.style.clipPath=p>=1?"":`inset(0 ${Math.round((1-ease(clamp01(p*1.4)))*100)}% 0 0)`})}
+  return p=>fns.forEach(f=>f(p))}
+function slFrame(host,s,i,deck,a,th){host.innerHTML=`<div class="sframe st-${th}">${slideHTML(s,i,deck,a,th)}</div>`;const f=host.firstChild;const u=slMount(f,s,i,th);if(u)u(1);return {frame:f,upd:u}}
+function slFit(host,frame,zoom=1){const r=host.getBoundingClientRect();const k=Math.max(.05,Math.min(r.width/SL_W,r.height/SL_H)*zoom);frame.style.transform=`translate(-50%,-50%) scale(${k})`;return k}
+
+/* ---------------- trình xem slide ---------------- */
+viewSlides=function(a){
+  const d=a.data||{};let sl=Array.isArray(d.slides)?d.slides:[];let i=0,zoom=1;const pend=[];UI.reopen=()=>viewSlides(a);
+  openModal({title:a.title,actions:srcBtn(a)+`<select id="slTh" class="sl-thsel" aria-label="Giao diện slide">${Object.entries(SL_THEMES).map(([k,l])=>`<option value="${k}" ${UI.slTheme===k?"selected":""}>${l}</option>`).join("")}</select><button class="pill-btn primary" id="slPlay">${ic("play")} Trình chiếu</button><button class="ghost ic" id="slCopy" title="Chép dàn ý" aria-label="Chép dàn ý">${ic("copy")}</button>`,
+    body:`<div class="sdeck"><div class="sdeck-main"><div class="sstage" id="sStage"></div><div class="szoom"><button class="ghost ic" id="sZi" aria-label="Phóng to">${ic("plus")}</button><button class="ghost ic" id="sZo" aria-label="Thu nhỏ">${ic("min")}</button></div>
+      <details class="snotes" id="sNotes"><summary>Lời giảng của slide</summary><div id="sNotesB"></div></details>
+      <div class="sedit"><label for="sEd" id="sEdL">Sửa slide 1</label><div class="sedit-row"><textarea class="input" id="sEd" rows="2" placeholder="Ví dụ: “Thêm giản đồ thời gian cho D flip-flop”, “Rút gọn tiêu đề”, “Thêm ví dụ số”"></textarea><button class="btn" id="sAdd">${ic("plus")} Thêm</button></div></div>
+      <div class="sbar"><button class="pill-btn" id="sPend">Thay đổi chờ áp dụng (0) ▾</button><button class="pill-btn" id="sCancel">Hủy</button>${d.prev?`<button class="pill-btn" id="sUndo">${ic("undo")} Bản trước</button>`:""}<div class="grow"></div><button class="pill-btn primary" id="sGen" disabled>${ic("spark")} Tạo lại bộ slide</button></div></div>
+      <aside class="sthumbs" id="sThumbs" aria-label="Danh sách slide"></aside></div>`});
+  bindSrcList(a);
+  const th=()=>UI.slTheme;const stage=$("#sStage");let cur=null;
+  const drawMain=()=>{i=Math.max(0,Math.min(sl.length-1,i));const s=sl[i]||{};cur=slFrame(stage,s,i,d,a,th());slFit(stage,cur.frame,zoom);
+    $("#sEdL").textContent=`Sửa slide ${i+1}`;$("#sNotesB").innerHTML=mdBlock(s.notes||"(Slide chưa có lời giảng)",a.srcLabels);
+    $$(".sth").forEach((t,j)=>{t.classList.toggle("on",j===i);if(j===i)t.scrollIntoView({block:"nearest"})})};
+  const drawThumbs=()=>{const box=$("#sThumbs");box.innerHTML=sl.map((_,j)=>`<div class="sth-r"><span class="n">${j+1}</span><button class="sth ${j===i?"on":""}" data-sj="${j}" aria-label="Slide ${j+1}"><div class="sth-in"></div></button><button class="ghost ic sth-m" data-sm="${j}" aria-label="Tùy chọn slide ${j+1}">${ic("more")}</button></div>`).join("");
+    $$(".sth",box).forEach((b,j)=>{const inn=$(".sth-in",b);const f=slFrame(inn,sl[j]||{},j,d,a,th());requestAnimationFrame(()=>slFit(inn,f.frame));b.onclick=()=>{i=j;drawMain()}});
+    $$("[data-sm]",box).forEach(b=>b.onclick=e=>{e.stopPropagation();const j=+b.dataset.sm;const m=popMenu(b,`<button data-x="up" ${j?"":"disabled"}>${ic("up")}Lên trên</button><button data-x="dn" ${j<sl.length-1?"":"disabled"}>${ic("down")}Xuống dưới</button><button data-x="dup">${ic("dup")}Nhân đôi</button><button data-x="del" style="color:var(--bad)" ${sl.length>1?"":"disabled"}>${ic("trash")}Xóa slide</button>`);
+      $$("[data-x]",m).forEach(x=>x.onclick=()=>{const n=sl.slice();const op=x.dataset.x;if(op==="up")[n[j-1],n[j]]=[n[j],n[j-1]];if(op==="dn")[n[j+1],n[j]]=[n[j],n[j+1]];if(op==="dup")n.splice(j+1,0,JSON.parse(JSON.stringify(n[j])));if(op==="del")n.splice(j,1);
+        i=op==="up"?j-1:op==="dn"?j+1:op==="dup"?j+1:Math.min(j,n.length-1);saveDeck(n,"Đã cập nhật bộ slide")})})};
+  const saveDeck=async(n,msg)=>{const prev=sl;sl=n;d.slides=n;d.prev=prev;a.data=d;drawThumbs();drawMain();try{await Store.patch(a.id,{data:{...d}});if(msg)toast(msg)}catch(e){toast("Chưa lưu được: "+(e.message||e))}};
+  const pendBtn=()=>{$("#sPend").textContent=`Thay đổi chờ áp dụng (${pend.length}) ▾`;$("#sGen").disabled=!pend.length};
+  $("#sAdd").onclick=()=>{const v=$("#sEd").value.trim();if(!v){$("#sEd").focus();return}pend.push({i,text:v});$("#sEd").value="";pendBtn();toast(`Đã thêm thay đổi cho slide ${i+1}`)};
+  $("#sEd").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();$("#sAdd").click()}};
+  $("#sPend").onclick=e=>{const m=popMenu(e.currentTarget,pend.length?pend.map((p,k)=>`<div class="pend-r"><b>Slide ${p.i+1}</b><span>${esc(p.text)}</span><button class="ghost ic" data-pd="${k}" aria-label="Bỏ">${ic("close")}</button></div>`).join(""):`<div class="who">Chưa có thay đổi nào. Viết yêu cầu vào ô “Sửa slide” rồi bấm Thêm.</div>`);
+    $$("[data-pd]",m).forEach(b=>b.onclick=()=>{pend.splice(+b.dataset.pd,1);pendBtn()})};
+  $("#sCancel").onclick=()=>{pend.length=0;pendBtn();$("#sEd").value=""};
+  const ud=$("#sUndo");if(ud)ud.onclick=()=>{if(!d.prev)return;const p=d.prev;saveDeck(p,"Đã quay về bản trước");d.prev=null};
+  $("#sGen").onclick=async()=>{if(!pend.length||!P.sample)return;const b=$("#sGen");b.disabled=true;b.innerHTML=`<span class="spin"></span> Đang sửa ${pend.length} thay đổi…`;
+    try{let ctx="";try{if(UI.cur&&UI.srcs.length){const c=await sourceContext(null,50000);ctx="\n\nNGUỒN:\n"+c.text}}catch(e){}
+      const r=await genJSON(`${rulesFor()}\n\nĐây là bộ slide hiện tại (JSON, slide đánh số từ 1):\n${JSON.stringify({title:d.title,slides:sl})}\n\nYÊU CẦU SỬA của người học:\n${pend.map(p=>`- Slide ${p.i+1}: ${p.text}`).join("\n")}\n\nNHIỆM VỤ: Áp dụng đúng các yêu cầu trên, giữ nguyên các slide không bị nhắc tới (có thể thêm slide mới nếu yêu cầu). Giữ cùng cấu trúc trường (title, bullets, notes, visual, scene, cards, table, math, formula, cite, layout).\nCác mẫu "scene" vẽ được:\n${VSCENES}\nTrả về CHỈ JSON: {"title":"…","slides":[…toàn bộ bộ slide sau khi sửa…]}${ctx}`,{modelTier:"default"});
+      if(!r||!Array.isArray(r.slides)||!r.slides.length)throw {code:"invalid_json"};pend.length=0;pendBtn();if(r.title)d.title=String(r.title).slice(0,120);await saveDeck(r.slides.slice(0,40),"Đã tạo lại bộ slide");}
+    catch(e){toast(aiErr(e),4500)}b.innerHTML=`${ic("spark")} Tạo lại bộ slide`;pendBtn()};
+  $("#sZi").onclick=()=>{zoom=Math.min(1.6,zoom*1.15);slFit(stage,cur.frame,zoom)};$("#sZo").onclick=()=>{zoom=Math.max(.5,zoom/1.15);slFit(stage,cur.frame,zoom)};
+  $("#slTh").onchange=e=>{UI.slTheme=e.target.value;local.set("slTheme",UI.slTheme);drawThumbs();drawMain()};
+  $("#slCopy").onclick=()=>copyText(sl.map((s,j)=>`${j+1}. ${s.title||""}\n${(s.bullets||[]).map(b=>"   • "+b).join("\n")}${s.notes?"\n   Lời giảng: "+s.notes:""}`).join("\n\n"));
+  $("#slPlay").onclick=()=>slideShow(a,sl,d,i);
+  const key=e=>{if(/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)||$("#sshow"))return;if(e.key==="ArrowRight"||e.key==="ArrowDown"){if(i<sl.length-1){i++;drawMain()}e.preventDefault()}if(e.key==="ArrowLeft"||e.key==="ArrowUp"){if(i>0){i--;drawMain()}e.preventDefault()}};
+  document.addEventListener("keydown",key);let ro=null;try{ro=new ResizeObserver(()=>{if(cur)slFit(stage,cur.frame,zoom)});ro.observe(stage)}catch(e){}
+  UI.modalCleanup=()=>{document.removeEventListener("keydown",key);if(ro)ro.disconnect();const s=$("#sshow");if(s)s.remove();stopSpeech()};
+  drawThumbs();drawMain();pendBtn();
+  if(a.kind==="video")setTimeout(()=>slideShow(a,sl,d,0),250);
+};
+
+/* ---------------- trình chiếu như video ---------------- */
+function slideShow(a,sl,d,start=0){
+  $$("#sshow").forEach(x=>x.remove());const lang=(a.cfg&&a.cfg.lang)||"vi";
+  const words=s=>sayable((s.title?s.title+". ":"")+(s.notes||(s.bullets||[]).join(". "))).split(/\s+/).filter(Boolean).length;
+  const durs=sl.map(s=>Math.max(6,Math.min(45,words(s)/2.5+(slVisKind(s)?3:1))));const starts=[];{let t=0;durs.forEach(x=>{starts.push(t);t+=x})}const total=()=>starts[starts.length-1]+durs[durs.length-1];
+  let t=starts[Math.min(start,sl.length-1)]||0,play=false,cur=-1,upd=null,frame=null,raf=0,last=0,spoken=-1,spDone=true,tok=0,rate=1,capOn=local.get("vCap",true),voice=hasSpeech()&&local.get("vVoice",true),rvs=[];
+  const ov=document.createElement("div");ov.id="sshow";ov.className="sshow";ov.setAttribute("role","dialog");ov.setAttribute("aria-label","Trình chiếu "+a.title);
+  ov.innerHTML=`<div class="ss-stage" id="ssSt"><div class="ss-host" id="ssHost"></div><div class="vcap ss-cap" id="ssCap"></div><button class="vbig" id="ssBig" aria-label="Phát"><span>${ic("play","i")}</span></button></div>
+    <div class="vctl ss-ctl"><button class="btn" id="ssPlay" aria-label="Phát/Tạm dừng">${ic("play")}</button><button class="btn" id="ssPrev" aria-label="Slide trước">${ic("back")}</button><button class="btn" id="ssNext" aria-label="Slide sau" style="transform:scaleX(-1)">${ic("back")}</button>
+      <div class="seekw"><div class="vmarks" id="ssMk"></div><input type="range" id="ssSeek" min="0" max="1000" value="0" aria-label="Tua"></div><span class="t" id="ssT">0:00 / 0:00</span><span class="t" id="ssN"></span>
+      <select id="ssRate" aria-label="Tốc độ"><option value="0.75">0,75×</option><option value="1" selected>1×</option><option value="1.25">1,25×</option><option value="1.5">1,5×</option></select>
+      <span class="vvol"><button class="btn" id="ssMute" aria-label="Tắt/bật tiếng">${ic(UI.mute?"mute":"vol")}</button><input type="range" id="ssVol" min="0" max="1" step="0.05" value="${UI.mute?0:(UI.vol??1)}" aria-label="Âm lượng"></span>
+      <button class="btn" id="ssCap2" aria-pressed="${capOn}" title="Phụ đề">CC</button>${hasSpeech()?`<button class="btn" id="ssVoice" aria-pressed="${voice}" title="Giọng đọc">${ic("audio")}</button>`:""}
+      <button class="btn" id="ssFull" aria-label="Toàn màn hình">${ic("full")}</button><button class="btn" id="ssX" aria-label="Thoát trình chiếu">${ic("close")}</button></div>`;
+  document.body.appendChild(ov);
+  const host=$("#ssHost",ov);const fmt=x=>`${Math.floor(x/60)}:${String(Math.floor(x%60)).padStart(2,"0")}`;
+  $("#ssMk",ov).innerHTML=starts.map(s=>`<i style="left:${s/total()*100}%"></i>`).join("");
+  const build=k=>{host.innerHTML=`<div class="sframe st-${UI.slTheme}">${slideHTML(sl[k]||{},k,d,a,UI.slTheme)}</div>`;frame=host.firstChild;upd=slMount(frame,sl[k]||{},k,UI.slTheme);rvs=$$(".rv",frame);slFit(host,frame);$("#ssN",ov).textContent=`${k+1}/${sl.length}`};
+  const caption=(k,p)=>{const c=$("#ssCap",ov);if(!capOn){c.textContent="";return}const w=sayable(sl[k].notes||"").split(/\s+/).filter(Boolean);const per=14,ch=[];for(let j=0;j<w.length;j+=per)ch.push(w.slice(j,j+per).join(" "));c.textContent=ch[Math.min(ch.length-1,Math.floor(p*ch.length))]||""};
+  const render=()=>{let k=starts.findIndex((s,j)=>t>=s&&t<s+durs[j]);if(k<0)k=t>=total()?sl.length-1:0;if(k!==cur){cur=k;build(k)}let p=clamp01((t-starts[k])/durs[k]);if(!play&&t<=starts[k]+.01&&!started)p=1;
+    const n=rvs.length||1;rvs.forEach((el,j)=>el.classList.toggle("on",p>=j/(n+1)*.7||p>=1));if(upd)upd(clamp01(p*1.35));caption(k,p);
+    $("#ssSeek",ov).value=Math.round(t/total()*1000);$("#ssT",ov).textContent=fmt(t)+" / "+fmt(total())};
+  const say=k=>{if(!voice||!play)return;stopSpeech();tok=speechToken;spoken=k;spDone=false;speak(sayable((sl[k].title?sl[k].title+". ":"")+(sl[k].notes||(sl[k].bullets||[]).join(". "))),{lang,rate}).then(()=>{if(tok===speechToken)spDone=true}).catch(()=>{spDone=true})};
+  const loop=now=>{const dt=Math.min(.1,(now-last)/1000);last=now;if(play){const k=cur<0?0:cur;const end=starts[k]+durs[k];let nt=t+dt*rate;if(voice&&!spDone&&nt>=end-.05)nt=end-.06;
+      if(nt>=total()){t=total()-.001;play=false;setBtn();render();raf=requestAnimationFrame(loop);return}t=nt;const nk=starts.findIndex((s,j)=>t>=s&&t<s+durs[j]);if(nk!==spoken&&nk>=0)say(nk)}
+    render();raf=requestAnimationFrame(loop)};
+  let started=false;const setBtn=()=>{if(play)started=true;$("#ssPlay",ov).innerHTML=ic(play?"pause":"play");$("#ssBig",ov).hidden=play||started};
+  const go=()=>{if(t>=total()-.01)t=0;play=true;last=performance.now();spoken=-1;setBtn()};const pause=()=>{play=false;stopSpeech();spDone=true;spoken=-1;setBtn()};
+  const seekTo=x=>{t=Math.max(0,Math.min(total()-.01,x));stopSpeech();spDone=true;spoken=-1;cur=-1;started=true;setBtn()};
+  const close=()=>{cancelAnimationFrame(raf);stopSpeech();document.removeEventListener("keydown",key);ro&&ro.disconnect();try{if(document.fullscreenElement)document.exitFullscreen()}catch(e){}ov.remove()};
+  $("#ssBig",ov).onclick=go;$("#ssPlay",ov).onclick=()=>play?pause():go();$("#ssSt",ov).addEventListener("click",e=>{if(e.target.closest(".vbig"))return;play?pause():go()});
+  $("#ssPrev",ov).onclick=()=>seekTo(starts[Math.max(0,(cur<0?0:cur)-(t-starts[Math.max(0,cur)]>1.5?0:1))]+.01);$("#ssNext",ov).onclick=()=>seekTo(starts[Math.min(sl.length-1,(cur<0?0:cur)+1)]+.01);
+  $("#ssSeek",ov).oninput=e=>seekTo(+e.target.value/1000*total());$("#ssRate",ov).onchange=e=>{rate=+e.target.value;if(play&&voice)spoken=-1};
+  const setVol=(v,m)=>{UI.vol=v;UI.mute=m;local.set("vol",v);local.set("mute",m);$("#ssMute",ov).innerHTML=ic(m||v===0?"mute":"vol");$("#ssVol",ov).value=m?0:v;if(play&&voice){stopSpeech();spDone=true;spoken=-1}};
+  $("#ssVol",ov).oninput=e=>setVol(+e.target.value,false);$("#ssMute",ov).onclick=()=>setVol(UI.vol||1,!UI.mute);
+  $("#ssCap2",ov).onclick=e=>{capOn=!capOn;local.set("vCap",capOn);e.currentTarget.setAttribute("aria-pressed",capOn)};
+  const vv=$("#ssVoice",ov);if(vv)vv.onclick=e=>{voice=!voice;local.set("vVoice",voice);e.currentTarget.setAttribute("aria-pressed",voice);if(!voice){stopSpeech();spDone=true}else spoken=-1};
+  $("#ssFull",ov).onclick=()=>{try{(document.fullscreenElement?document.exitFullscreen():ov.requestFullscreen()).catch(()=>{})}catch(e){}};$("#ssX",ov).onclick=close;
+  const key=e=>{if(!document.body.contains(ov))return;if(e.key==="Escape"){e.preventDefault();e.stopImmediatePropagation();close();return}if(e.key===" "){e.preventDefault();play?pause():go()}if(e.key==="ArrowRight")$("#ssNext",ov).click();if(e.key==="ArrowLeft")$("#ssPrev",ov).click();
+    if(e.key==="m"||e.key==="M")$("#ssMute",ov).click();if(e.key==="ArrowUp"||e.key==="ArrowDown"){e.preventDefault();const v=Math.max(0,Math.min(1,(UI.mute?0:(UI.vol??1))+(e.key==="ArrowUp"?.1:-.1)));setVol(Math.round(v*20)/20,false)}};
+  document.addEventListener("keydown",key,true);let ro=null;try{ro=new ResizeObserver(()=>{if(frame)slFit(host,frame)});ro.observe(host)}catch(e){}
+  if(!RM())ov.animate([{opacity:0},{opacity:1}],{duration:220,easing:"ease-out"});
+  render();raf=requestAnimationFrame(loop);setTimeout(go,350);
+}
+
+/* =====================================================================
+   MẪU MÀU GIAO DIỆN MỚI + BỘ CHỦ ĐỀ (giao diện + cảnh nền + biểu tượng)
+   ===================================================================== */
+const SKIN_VARS={
+ sakura:["light",["#fff5f8","#ffffff","#fff0f5","#ffe4ee","#f6cddd","#4a2a3a","#9a6b80","#e8578f","#ffe0ec","#ffffff","#7b8ce8","#e6e9ff"],{l:"Hoa anh đào"}],
+ ocean:["dark",["#0b1a20","#10262e","#163340","#1b3c4a","#24505f","#e3f6f8","#8fb9c0","#4fd1c5","#123c3c","#062220","#7fb8ff","#173450"],{l:"Đại dương đêm"}],
+ lavender:["light",["#f6f3ff","#ffffff","#f1ecff","#e8e0ff","#d8cdf7","#3a2f63","#7a6ea3","#8a6cf0","#ece5ff","#ffffff","#e87fb8","#fde6f2"],{l:"Oải hương",pixel:true}],
+ matcha:["light",["#f3f7ee","#ffffff","#eef4e6","#e4eedb","#cfdec0","#26331c","#667a58","#5b8c3a","#e3efd6","#ffffff","#c98a4a","#f6e7d6"],{l:"Trà xanh"}],
+ peach:["light",["#fff4ec","#ffffff","#fff0e6","#ffe6d6","#f6d2bb","#3f2a20","#8f6a58","#f07a4a","#ffe3d4","#ffffff","#3fa6a0","#d8f1ef"],{l:"Đào hoàng hôn"}],
+ midnight:["dark",["#0d1226","#141a33","#1a2140","#20294d","#2c3762","#e6ebff","#9aa4cc","#7aa2ff","#1d2a52","#0a1230","#ff9bd2","#3a2240"],{l:"Xanh nửa đêm"}],
+ neon:["dark",["#0b0716","#140d26","#1b1233","#24183f","#3a2763","#f4ecff","#a99ad1","#ff3ea5","#3a1230","#1a0410","#29f0ff","#0c3442"],{l:"Neon cyber",pixel:true}],
+ coffee:["dark",["#1a1411","#231b17","#2b221c","#352a23","#4a3a30","#f3e7dc","#bba493","#d9a066","#3a2a1c","#1a1006","#8fc7a8","#1f3328"],{l:"Cà phê sữa"}],
+ mint:["light",["#eefbf6","#ffffff","#e6f7ef","#dbf2e7","#bfe6d4","#1f3a30","#5d8576","#2bb39a","#d6f3ea","#ffffff","#f08bb8","#fde4ef"],{l:"Bạc hà pixel",pixel:true}],
+ terminal:["dark",["#050d07","#0a160d","#0e1d12","#132618","#1e3b25","#c8ffd6","#6fae80","#39ff7a","#0f3a1c","#021006","#ffd166","#3a2e0c"],{l:"Màn hình cổ"}],
+ nord:["dark",["#2e3440","#353c4a","#3b4252","#434c5e","#4c566a","#eceff4","#a3adbf","#88c0d0","#34505a","#1d2a30","#b48ead","#3e3647"],{l:"Bắc Âu"}],
+ ink:["light",["#f7f1e3","#fffaf0","#f3ebd8","#ece2c9","#ddd0b0","#2a2a33","#6d6656","#3a5ba0","#e2e8f4","#ffffff","#c0504d","#f7e0de"],{l:"Mực & giấy"}]
+};
+(function addSkins(){let css="";Object.entries(SKIN_VARS).forEach(([k,[theme,c,o]])=>{const [bg,panel,panel2,hover,line,ink,muted,accent,accSoft,accInk,sig,sigSoft]=c;
+  if(!SKINS.find(s=>s.k===k))SKINS.push({k,l:o.l,sw:[bg,panel2,accent,sig],theme,pixel:!!o.pixel});
+  const dark=theme==="dark";
+  css+=`:root[data-skin="${k}"]{--bg:${bg};--panel:${panel};--panel2:${panel2};--hover:${hover};--line:${line};--ink:${ink};--muted:${muted};--accent:${accent};--accent-soft:${accSoft};--accent-ink:${accInk};--sig:${sig};--sig-soft:${sigSoft};--ok:${dark?"#7be0a0":"#2e8a52"};--warn:${dark?"#f2c46a":"#a8690f"};--bad:${dark?"#ff8a8a":"#c0392b"};--trace:${dark?"#f2d07a":"#b48a2a"};--ink-hand:${dark?sig:accent};--pen-red:${dark?"#ff9ab0":"#d9365e"};--frame:${line};color-scheme:${theme}${k==="terminal"?";--f-body:'JetBrains Mono',ui-monospace,monospace;--f-display:'JetBrains Mono',ui-monospace,monospace":k==="ink"?";--f-display:'Patrick Hand','Be Vietnam Pro',system-ui,sans-serif":(o.pixel?";--f-display:'Baloo 2','Quicksand',system-ui,sans-serif;--f-body:'Quicksand','IBM Plex Sans',system-ui,sans-serif":"")}}\n`});
+  const st=document.createElement("style");st.id="skins16";st.textContent=css;document.head.appendChild(st)})();
+const THEME_PRESETS=[
+ {k:"p-night",l:"Đêm anh đào",skin:"demsao",bg:"night",sym:"auto"},{k:"p-beach",l:"Biển chiều",skin:"ocean",bg:"beach",sym:"auto"},{k:"p-pink",l:"Trời hồng mộng mơ",skin:"lavender",bg:"pinksky",sym:"auto"},
+ {k:"p-garden",l:"Vườn nhà",skin:"matcha",bg:"cottage",sym:"auto"},{k:"p-sunset",l:"Phố hoàng hôn",skin:"peach",bg:"sunset",sym:"auto"},{k:"p-desk",l:"Desktop pastel",skin:"pastel",bg:"desk",sym:"heart"},
+ {k:"p-sakura",l:"Mùa hoa anh đào",skin:"sakura",bg:"day",sym:"petal"},{k:"p-neon",l:"Thành phố neon",skin:"neon",bg:"night",sym:"star"},{k:"p-coffee",l:"Cà phê đêm mưa",skin:"coffee",bg:"night",sym:"rain"},
+ {k:"p-snow",l:"Đêm tuyết",skin:"midnight",bg:"pinksky",sym:"snow"},{k:"p-term",l:"Phòng lab cổ",skin:"terminal",bg:"night",sym:"firefly"},{k:"p-paper",l:"Sổ tay giấy",skin:"ink",bg:"desk",sym:"note"}];
+function applyPreset(p){applySkin(p.skin);UI.bg.sel=p.bg;UI.bg.wall=true;UI.bg.sym=p.sym;local.set("bgSym",p.sym);try{_fxL.forEach(L=>L.key="")}catch(e){}saveBg();applyBg();drawBanner();if(UI.view==="home")renderHome();renderFly();toast("Đã áp dụng chủ đề “"+p.l+"”")}
+function skinMock(s){const [bg,p2,ac,sg]=s.sw;return `<div class="skmock" style="--b:${bg};--p:${p2};--a:${ac};--s:${sg||ac}"><i class="r"></i><i class="h"></i><i class="c1"></i><i class="c2"></i><i class="bt"></i></div>`}
+const _renderFly16=renderFly;renderFly=function(...x){const r=_renderFly16.apply(this,x);if(UI.fly!=="skin")return r;const f=$(".flyout");if(!f)return r;
+  const sk=$(".skins",f);if(sk){sk.innerHTML=["dark","light"].map(t=>`<div class="sk-grp">${t==="dark"?"Tối":"Sáng"}</div>`+SKINS.filter(s=>s.theme===t).map(s=>`<button class="skin" data-sk="${s.k}" aria-pressed="${UI.skin===s.k}" title="${esc(s.l)}">${skinMock(s)}<b>${esc(s.l)}${s.pixel?` <small>pixel</small>`:""}</b></button>`).join("")).join("");
+    $$("[data-sk]",sk).forEach(b=>b.onclick=()=>{applySkin(b.dataset.sk);applyPrefs(UI.profile);renderFly();if(UI.view==="home")renderHome()})
+    const pr=document.createElement("div");pr.className="presets";pr.innerHTML=`<h4 style="margin:2px 0 6px;font-size:14px">Bộ chủ đề (giao diện + cảnh nền)</h4><div class="pre-grid">${THEME_PRESETS.map(p=>{const s=SKINS.find(z=>z.k===p.skin)||SKINS[0];return `<button class="pre" data-pre="${p.k}" title="${esc(p.l)}"><img src="${sceneURL(p.bg,160,90,local.get("bnrSeed","so-hoc"))}" alt=""><span class="pre-sw" style="background:${s.sw[2]}"></span><b>${esc(p.l)}</b></button>`}).join("")}</div><h4 style="margin:10px 0 6px;font-size:14px">Màu giao diện</h4>`;
+    sk.before(pr);$$("[data-pre]",pr).forEach(b=>b.onclick=()=>applyPreset(THEME_PRESETS.find(p=>p.k===b.dataset.pre)))}
+  return r};
+
+/* v16: trường công thức trong slide/video phải là LaTeX thuần (không $…$) */
+{const _spec16b=spec;spec=function(k,cfg){const s=_spec16b(k,cfg);if((k==="slides"||k==="video")&&s&&s.task)s.task+=`\nQUY ƯỚC CÔNG THỨC: trong "math", "formula" và "steps" mỗi phần tử là MỘT dòng LaTeX thuần (ví dụ "F = A\\overline{B} + AB" hoặc "I = \\frac{5-2}{330}") — TUYỆT ĐỐI không bọc trong $…$ hay $$…$$, không dùng \\displaystyle, không trộn câu chữ (lời giải thích để ở "bullets"/"notes"/"note"). Phủ định dùng \\overline{A} hoặc A'. Trong "bullets" thì vẫn dùng $…$ cho công thức xen trong câu.`;return s}}
+
+/* dòng công thức quá dài: thu nhỏ chữ thay vì xuống dòng */
+function hwFit(root){const run=()=>{$$(".hw-sheet .step",root).forEach(st=>{const sp=st.lastElementChild;if(!sp)return;sp.style.fontSize="";const n=st.firstElementChild;const avail=st.clientWidth-(n&&n!==sp?n.offsetWidth+14:0)-30;let w=sp.scrollWidth;if(avail>40&&w>avail)sp.style.fontSize=Math.max(.55,avail/w).toFixed(3)+"em"})};requestAnimationFrame(run);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(run)}
+
+/* =====================================================================
+   v16 — GMAIL TRONG SỔ HỌC
+   - Hộp thư: tìm thư, đọc, thêm thư làm nguồn bài học, AI tóm tắt, soạn / trả lời
+   - Widget "Hộp thư Gmail", nút Gmail ở thanh bên và thanh trên
+   - Chạy qua trình kết nối Gmail của Claude (trong ứng dụng Claude)
+     hoặc qua đăng nhập Google (bản web)
+   ===================================================================== */
+const GM="Gmail";
+Object.assign(IC,{mail:'<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 7.5l8.5 6 8.5-6"/>',reply:'<path d="M9 15l-5-5 5-5"/><path d="M4 10h10a6 6 0 0 1 6 6v3"/>',search:'<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'});
+const gmPay=r=>{if(!r)return {};if(r.payload&&typeof r.payload==="object")return r.payload;if(r.structuredContent&&typeof r.structuredContent==="object")return r.structuredContent;
+  const t=Array.isArray(r.content)&&r.content.find(c=>c&&c.type==="text");if(t){try{return JSON.parse(t.text)}catch(e){}}return r};
+async function gmCall(tool,args){if(!P.mcp)throw {code:"unavailable"};return gmPay(await P.mcp.callTool(GM,tool,args||{}))}
+async function gmStatus(){if(!P.mcp)return "none";
+  try{const r=await P.mcp.listTools(GM);const s=(r.servers||[]).find(x=>x.server===GM);if(!s||!s.tools||!s.tools.length)return "none";return s.authStatus==="needs_reauth"?"reauth":"ok"}catch(e){return "none"}}
+function gmErr(e){const c=e&&e.code;
+  if(c==="unavailable")return "Gmail chỉ dùng được trong ứng dụng Claude hoặc bản web đã đăng nhập Google.";
+  if(c==="no_client")return "Chưa cấu hình Google Client ID — mở Cài đặt (bánh răng) để thêm.";
+  if(c==="server_not_connected")return P.local?"Chưa liên kết Gmail: bấm “Liên kết Gmail” trong menu tài khoản.":"Chưa thêm Gmail: vào claude.ai → Cài đặt → Trình kết nối → Gmail.";
+  if(c==="needs_reauth")return P.local?"Phiên Google hết hạn — bấm “Kết nối lại”.":"Phiên Gmail hết hạn: kết nối lại Gmail trong claude.ai → Cài đặt → Trình kết nối.";
+  if(c==="popup_closed")return "Bạn đã đóng cửa sổ đăng nhập Google.";
+  if(c==="approval_required"||c==="not_in_manifest")return e.message&&P.local?String(e.message):"Bạn chưa cho phép trang dùng Gmail.";
+  if(c==="rate_limited")return "Gmail đang giới hạn số lượt — đợi một chút rồi thử lại.";
+  return "Gmail báo lỗi: "+String(e&&e.message||e||"").slice(0,160)}
+async function gmConnect(){
+  if(!P.mcp){toast(gmErr({code:"unavailable"}),4500);return false}
+  try{if(P.perm)await P.perm.request(["mcp:"+GM]);await gmCall("search_threads",{pageSize:1,view:"THREAD_VIEW_METADATA_ONLY"});toast("Đã liên kết Gmail");return true}catch(e){toast(gmErr(e),5000);return false}}
+/* chuẩn hóa thư (chấp nhận cả kiểu camelCase lẫn snake_case) */
+function gmNorm(m){m=m||{};const d=m.date||m.internalDate||m.internal_date||"";
+  return {id:m.id,threadId:m.threadId||m.thread_id||"",subject:m.subject||"",from:m.sender||m.from||"",to:m.toRecipients||m.to_recipients||[],cc:m.ccRecipients||m.cc_recipients||[],
+    date:/^\d{10,}$/.test(String(d))?new Date(+d):d?new Date(d):null,snippet:m.snippet||"",labels:m.labelIds||m.label_ids||[],body:m.plaintextBody||m.plaintext_body||"",atts:m.attachments||[],url:m.viewUrl||m.view_url||""}}
+const gmName=s=>{s=String(s||"");const m=s.match(/^\s*"?([^"<]*?)"?\s*<[^>]+>/);return (m&&m[1].trim())||s.replace(/<.*>/,"").trim()||s};
+const gmAddr=s=>{s=String(s||"");const m=s.match(/<([^>]+)>/);return (m?m[1]:s).trim()};
+function gmWhen(d){if(!d||isNaN(d))return "";const n=new Date();if(d.toDateString()===n.toDateString())return d.toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit"});
+  return d.toLocaleDateString("vi-VN",d.getFullYear()===n.getFullYear()?{day:"numeric",month:"short"}:{day:"numeric",month:"numeric",year:"numeric"})}
+const gmLink=t=>esc(t).replace(/(https?:\/\/[^\s<>"')\]]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+const GM_CHIPS=[["in:inbox","Hộp thư đến"],["is:unread in:inbox","Chưa đọc"],["is:starred","Gắn sao"],["has:attachment newer_than:60d","Có tệp đính kèm"],["(vgu OR moodle) newer_than:90d","Trường VGU · Moodle"],["(deadline OR \"hạn nộp\" OR assignment OR exam OR \"thi\") newer_than:30d","Hạn nộp · thi"],["in:sent","Đã gửi"]];
+UI.mail={q:"in:inbox",threads:[],next:null,sel:null,thread:null};
+
+async function openMailHub(threadId){
+  const st=await gmStatus();
+  if(st==="none"||st==="reauth"){
+    openModal({title:"Gmail",small:true,body:`<div class="form"><div class="mail-hero">${ic("mail")}</div><p style="margin:0">Liên kết Gmail để đọc thư trường, thông báo Moodle, hạn nộp bài ngay trong Sổ Học; thêm thư làm <b>nguồn</b> cho bài học, nhờ AI tóm tắt và soạn thư trả lời.</p>
+      <p class="muted" style="margin:0;font-size:13px">${P.local?"Trang sẽ mở cửa sổ Google để bạn chọn tài khoản và tích ô cho phép đọc / soạn thư. Quyền chỉ lưu trên trình duyệt này.":"Dùng trình kết nối Gmail trong tài khoản Claude của bạn. Nếu chưa thêm: claude.ai → Cài đặt → Trình kết nối → Gmail."}</p></div>`,
+      foot:`<button class="pill-btn" data-close>Để sau</button><div class="grow"></div><button class="pill-btn primary" id="gmLk">${ic("mail")} ${st==="reauth"?"Kết nối lại Gmail":"Liên kết Gmail"}</button>`});
+    $("#gmLk").onclick=async()=>{if(await gmConnect()){closeDialog();openMailHub(threadId)}};return}
+  UI.reopen=null;const _vm=UI.vmode;if(_vm==="dock"||_vm==="split")UI.vmode="modal";
+  const acc=P.local&&window.SOHOC&&SOHOC.google?SOHOC.google.accounts().find(a=>a.active):null;
+  openModal({title:"Gmail",actions:`<div class="mh-acct">${acc?`${acc.pic?`<img src="${esc(acc.pic)}" alt="" referrerpolicy="no-referrer">`:ic("user")}<span>${esc(acc.email||acc.name)}</span>`:""}</div>`,
+    body:`<div class="mailhub"><form class="mh-bar" id="mhF"><span class="mh-sic">${ic("search")}</span><input class="input" id="mhQ" placeholder="Tìm thư — ví dụ: from:vgu.edu.vn, moodle, hạn nộp" value="${esc(UI.mail.q)}" aria-label="Tìm trong Gmail"><button class="btn" type="submit">Tìm</button><button class="btn" type="button" id="mhR" title="Làm mới" aria-label="Làm mới">${ic("sync")}</button><button class="pill-btn primary" type="button" id="mhNew">${ic("edit")} Soạn thư</button></form>
+      <div class="mh-chips">${GM_CHIPS.map(([q,l])=>`<button type="button" class="chip" data-mq="${esc(q)}" aria-pressed="${UI.mail.q===q}">${l}</button>`).join("")}</div>
+      <div class="mh-main"><div class="mh-list" id="mhList" role="list"></div><div class="mh-read" id="mhRead"><div class="mh-empty">${ic("mail")}<p>Chọn một thư để đọc</p></div></div></div></div>`});UI.vmode=_vm;
+  const go=q=>{UI.mail.q=q;$$("[data-mq]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.mq===q));gmList(false)};
+  $("#mhF").onsubmit=e=>{e.preventDefault();go($("#mhQ").value.trim())};$("#mhR").onclick=()=>gmList(false);
+  $$("[data-mq]").forEach(b=>b.onclick=()=>{$("#mhQ").value=b.dataset.mq;go(b.dataset.mq)});
+  $("#mhNew").onclick=()=>gmCompose({});
+  await gmList(false);if(threadId)gmOpen(threadId);
+}
+async function gmList(more){const L=$("#mhList");if(!L)return;
+  if(!more){UI.mail.threads=[];UI.mail.next=null;L.innerHTML=Array.from({length:6},()=>`<div class="mh-item sk"><i></i><i></i><i></i></div>`).join("")}
+  try{const r=await gmCall("search_threads",{query:UI.mail.q||undefined,pageSize:20,...(more&&UI.mail.next?{pageToken:UI.mail.next}:{})});
+    const th=(r.threads||[]).map(t=>{const ms=(t.messages||[]).map(gmNorm);const last=ms[ms.length-1]||{};const first=ms[0]||{};
+      return {id:t.id,count:t.messageCount||ms.length,subject:first.subject||last.subject||"(Không tiêu đề)",from:last.from||first.from,date:last.date||first.date,snippet:last.snippet||first.snippet,unread:ms.some(m=>m.labels.includes("UNREAD")),star:ms.some(m=>m.labels.includes("STARRED")),att:ms.some(m=>(m.atts||[]).length)}});
+    UI.mail.threads=more?UI.mail.threads.concat(th):th;UI.mail.next=r.nextPageToken||r.next_page_token||null;gmPaintList()}
+  catch(e){L.innerHTML=`<div class="mh-err">${esc(gmErr(e))}${e&&(e.code==="needs_reauth"||e.code==="server_not_connected")?`<button class="btn" id="mhRe" style="margin-top:8px">${ic("sync")} Kết nối lại</button>`:""}</div>`;const b=$("#mhRe");if(b)b.onclick=async()=>{if(await gmConnect())gmList(false)}}}
+function gmPaintList(){const L=$("#mhList");if(!L)return;const T=UI.mail.threads;
+  L.innerHTML=T.length?T.map(t=>`<button class="mh-item${t.unread?" unread":""}${UI.mail.sel===t.id?" on":""}" data-th="${esc(t.id)}" role="listitem"><span class="mh-from">${esc(gmName(t.from))}${t.count>1?` <small>${t.count}</small>`:""}</span><span class="mh-date">${t.star?"★ ":""}${esc(gmWhen(t.date))}</span><b class="mh-sub">${esc(t.subject)}</b><span class="mh-snip">${esc(t.snippet)}</span></button>`).join("")+(UI.mail.next?`<button class="btn mh-more" id="mhMore">Xem thêm</button>`:"")
+    :`<div class="mh-empty">${ic("search")}<p>Không có thư nào khớp “${esc(UI.mail.q)}”.</p></div>`;
+  $$("[data-th]",L).forEach(b=>b.onclick=()=>gmOpen(b.dataset.th));const m=$("#mhMore");if(m)m.onclick=()=>{m.disabled=true;gmList(true)}}
+async function gmOpen(id){UI.mail.sel=id;$$(".mh-item").forEach(b=>b.classList.toggle("on",b.dataset.th===id));const R=$("#mhRead");if(!R)return;
+  R.classList.add("open");R.innerHTML=`<div class="mh-loading"><span class="spin"></span> Đang mở thư…</div>`;
+  try{const t=await gmCall("get_thread",{threadId:id,messageFormat:"PLAIN_TEXT"});const ms=(t.messages||[]).map(gmNorm);if(!ms.length)throw {code:"tool_error",message:"Thư trống"};
+    const th={id,subject:ms[0].subject||"(Không tiêu đề)",msgs:ms,url:t.viewUrl||t.view_url||ms[0].url||("https://mail.google.com/mail/#all/"+id)};UI.mail.thread=th;
+    const it=UI.mail.threads.find(x=>x.id===id);if(it){it.unread=false;gmPaintList()}
+    R.innerHTML=`<div class="mh-rhead"><button class="ghost ic mh-back" id="mhBack" aria-label="Quay lại danh sách">${ic("back")}</button><h3>${esc(th.subject)}</h3></div>
+      <div class="mh-acts"><button class="btn" id="mhSrc">${ic("plus")} Thêm làm nguồn bài học</button><button class="btn" id="mhSum">${ic("spark")} AI tóm tắt</button><button class="btn" id="mhRep">${ic("reply")} Trả lời</button><a class="btn" href="${esc(th.url)}" target="_blank" rel="noopener noreferrer">${ic("ext")} Mở Gmail</a></div>
+      <div id="mhAI"></div>
+      ${ms.map((m,i)=>`<article class="mh-msg${i<ms.length-2?" fold":""}"><header><span class="mh-av">${esc((gmName(m.from)[0]||"?").toUpperCase())}</span><div><b>${esc(gmName(m.from))}</b> <small>${esc(gmAddr(m.from))}</small><br><small>đến ${esc((m.to||[]).map(gmName).join(", ")||"—")}</small></div><time>${m.date&&!isNaN(m.date)?esc(m.date.toLocaleString("vi-VN",{dateStyle:"medium",timeStyle:"short"})):""}</time></header>
+        <div class="mh-body">${gmLink(m.body||m.snippet||"")}</div>${(m.atts||[]).length?`<div class="mh-atts">${m.atts.map(a=>`<span class="chip">${ic("file")} ${esc(a.filename||a.name||"tệp")}</span>`).join("")}</div>`:""}</article>`).join("")}`;
+    $$(".mh-msg.fold header",R).forEach(h=>h.onclick=()=>h.parentElement.classList.remove("fold"));
+    $("#mhBack").onclick=()=>R.classList.remove("open");
+    $("#mhSrc").onclick=e=>gmAddSource(th,e.currentTarget);$("#mhSum").onclick=()=>gmSummary(th);
+    $("#mhRep").onclick=()=>{const last=ms[ms.length-1];gmCompose({to:gmAddr(last.from),subject:/^re:/i.test(th.subject)?th.subject:"Re: "+th.subject,threadId:id,quote:last})}}
+  catch(e){R.innerHTML=`<div class="mh-err">${esc(gmErr(e))}</div>`}}
+const gmText=th=>`Thư: ${th.subject}\n`+th.msgs.map(m=>`--- Từ: ${m.from}\nĐến: ${(m.to||[]).join(", ")}\nNgày: ${m.date&&!isNaN(m.date)?m.date.toLocaleString("vi-VN"):""}\n\n${(m.body||m.snippet||"").trim()}${(m.atts||[]).length?"\n[Tệp đính kèm: "+m.atts.map(a=>a.filename||a.name).join(", ")+"]":""}`).join("\n\n");
+async function gmAddSource(th,btn){
+  const put=async nb=>{const text=gmText(th);const id=mkid("src");const CH=60000,chunks=[];for(let i=0;i<text.length&&chunks.length<12;i+=CH)chunks.push(text.slice(i,i+CH));
+    for(let i=0;i<chunks.length;i++)await Store.put(`txt-${id}-${i}`,{type:"txt",nb:nb.id,src:id,n:i,text:chunks[i]});UI.textCache.set(id,chunks.join(""));
+    await Store.put(id,{type:"src",nb:nb.id,name:("✉ "+th.subject).slice(0,120),kind:"paste",chars:text.length,chunks:chunks.length,truncated:false,url:th.url,on:true,created:Date.now()});
+    const cnt=(await Store.query({nb:nb.id,type:"src"})).length;await Store.patch(nb.id,{srcCount:cnt,updated:Date.now()});toast(`Đã thêm thư vào “${nb.title}”`)};
+  if(UI.view==="nb"&&UI.cur)return put(UI.cur);
+  const nbs=[...(UI.nbs||[])].sort((a,b)=>(b.updated||0)-(a.updated||0)).slice(0,12);if(!nbs.length){toast("Chưa có sổ học nào — tạo bài học trước");return}
+  const m=popMenu(btn,`<div class="who">Thêm thư vào bài học</div>${nbs.map(n=>`<button data-nbp="${esc(n.id)}">${ic("book")}${esc(n.title)}</button>`).join("")}`);
+  $$("[data-nbp]",m).forEach(b=>b.onclick=()=>{const n=UI.nbs.find(x=>x.id===b.dataset.nbp);if(n)put(n)})}
+async function gmSummary(th){const box=$("#mhAI");if(!box)return;if(!P.sample){box.innerHTML=`<div class="mh-ai muted">Cần trợ lý AI để tóm tắt.</div>`;return}
+  box.innerHTML=`<div class="mh-ai"><b>${ic("spark")} Tóm tắt</b><div class="mh-ai-t"><span class="spin"></span></div></div>`;const out=$(".mh-ai-t",box);
+  const prompt=`Tóm tắt thư sau bằng tiếng Việt cho một sinh viên, ngắn gọn:\n- 1 câu: thư nói về gì, ai gửi\n- Các việc cần làm (nếu có), mỗi việc một dòng, ghi rõ HẠN (ngày/giờ) nếu thư có\n- Điểm cần chú ý khác (nếu có)\nKhông bịa thông tin không có trong thư.\n\n${gmText(th).slice(0,24000)}`;
+  try{const r=await P.sample(prompt,{modelTier:"quick",onText:({text})=>{out.innerHTML=mdBlock(text)}});out.innerHTML=mdBlock(r.text||"")}catch(e){out.innerHTML=`<span style="color:var(--bad)">${esc(aiErr(e))}</span>`}}
+function gmCompose({to="",cc="",subject="",body="",threadId=null,quote=null}){
+  openModal({title:threadId?"Trả lời thư":"Soạn thư mới",small:true,body:`<div class="form mh-comp">
+    <div class="field"><label for="gcTo">Đến</label><input class="input" id="gcTo" value="${esc(to)}" placeholder="ten@vgu.edu.vn, ban@gmail.com" spellcheck="false" autocomplete="email"></div>
+    <div class="field"><label for="gcCc">Cc</label><input class="input" id="gcCc" value="${esc(cc)}" spellcheck="false"></div>
+    <div class="field"><label for="gcSub">Tiêu đề</label><input class="input" id="gcSub" value="${esc(subject)}"></div>
+    <div class="field"><label for="gcBody">Nội dung</label><textarea class="input" id="gcBody" rows="9">${esc(body)}</textarea></div>
+    <div class="mh-aiw"><input class="input" id="gcAsk" placeholder="${threadId?"Muốn trả lời thế nào? — ví dụ: xin gia hạn nộp bài 2 ngày":"Muốn viết gì? — ví dụ: email xin thầy lịch hẹn trao đổi đồ án"}"><button class="btn" type="button" id="gcAI">${ic("spark")} AI viết giúp</button></div>
+    <p class="muted" style="margin:0;font-size:12.5px">Thư chỉ được gửi khi bạn bấm “Gửi”. AI chỉ viết nháp — hãy đọc lại trước khi gửi.</p></div>`,
+    foot:`<button class="pill-btn" data-close>Hủy</button><div class="grow"></div><button class="pill-btn" id="gcDraft">Lưu nháp</button><button class="pill-btn primary" id="gcSend">${ic("send")} Gửi</button>`});
+  const val=()=>{const sp=s=>s.split(/[,;]/).map(x=>x.trim()).filter(Boolean);return {to:sp($("#gcTo").value),cc:sp($("#gcCc").value),subject:$("#gcSub").value.trim(),body:$("#gcBody").value}};
+  const bad=v=>{const all=[...v.to,...v.cc];if(!v.to.length)return "Nhập người nhận";const w=all.find(a=>!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(a));return w?`Địa chỉ chưa đúng: ${w}`:null};
+  $("#gcAI").onclick=async()=>{if(!P.sample){toast("Cần trợ lý AI");return}const ask=$("#gcAsk").value.trim();const ta=$("#gcBody");const btn=$("#gcAI");btn.disabled=true;
+    const prompt=`Viết nội dung một email bằng ${/[a-z]{3,}/i.test(ask)&&!/[ăâđêôơưáàảãạ]/i.test(ask)?"ngôn ngữ của yêu cầu":"tiếng Việt"} (hoặc tiếng Anh/Đức nếu yêu cầu nói vậy), lịch sự, ngắn gọn, phù hợp sinh viên viết cho thầy cô/bạn bè ở trường đại học. Chỉ trả về phần thân thư (có lời chào và ký tên “[Tên của bạn]”), không có tiêu đề, không markdown.\nYÊU CẦU: ${ask||"viết thư phù hợp"}\nTIÊU ĐỀ: ${$("#gcSub").value}\n${ta.value.trim()?"BẢN NHÁP HIỆN TẠI:\n"+ta.value.slice(0,4000)+"\n":""}${quote?"THƯ ĐANG TRẢ LỜI (từ "+quote.from+"):\n"+String(quote.body||quote.snippet).slice(0,6000):""}`;
+    try{const r=await P.sample(prompt,{modelTier:"quick",onText:({text})=>{ta.value=text}});ta.value=String(r.text||ta.value).trim();if(!$("#gcSub").value.trim()&&ask)$("#gcSub").value=ask.slice(0,80)}catch(e){toast(aiErr(e),4000)}btn.disabled=false};
+  $("#gcDraft").onclick=async()=>{const v=val();if(!v.to.length&&!v.body.trim()){toast("Thư còn trống");return}try{await gmCall("create_draft",{...v,...(threadId&&quote?{replyToMessageId:quote.id}:{})});closeDialog();toast("Đã lưu vào Thư nháp của Gmail")}catch(e){toast(gmErr(e),4500)}};
+  $("#gcSend").onclick=async()=>{const v=val();const b=bad(v);if(b){toast(b);return}if(!v.subject&&!confirm("Gửi thư không có tiêu đề?"))return;const btn=$("#gcSend");btn.disabled=true;
+    try{await gmCall("send_message",{...v,...(threadId?{replyThreadId:threadId}:{})});closeDialog();toast("Đã gửi thư tới "+v.to.join(", "))}catch(e){btn.disabled=false;toast(gmErr(e),5000)}}}
+
+/* ---------- widget "Hộp thư Gmail" ---------- */
+WIDGETS.mail={t:"inbox.exe",title:"Hộp thư Gmail",desc:"Thư chưa đọc mới nhất, bấm để đọc",build(b){let alive=true;
+  const draw=async()=>{if(!alive)return;const st=await gmStatus();if(st!=="ok"){b.innerHTML=`<div class="row muted" style="font-size:12.5px">${st==="reauth"?"Phiên Gmail hết hạn.":"Chưa liên kết Gmail."}</div><div class="row"><button class="sm on" data-gml>${ic("mail")} ${st==="reauth"?"Kết nối lại":"Liên kết Gmail"}</button></div>`;$("[data-gml]",b).onclick=async()=>{if(await gmConnect())draw()};return}
+    b.innerHTML=`<div class="row muted" style="font-size:12.5px"><span class="spin"></span> Đang tải thư…</div>`;
+    try{const r=await gmCall("search_threads",{query:"is:unread in:inbox",pageSize:5});const th=(r.threads||[]).map(t=>{const ms=(t.messages||[]).map(gmNorm);const l=ms[ms.length-1]||{};return {id:t.id,s:(ms[0]||l).subject||"(Không tiêu đề)",f:gmName(l.from),d:l.date}});
+      const est=+(r.resultCountEstimate||r.result_count_estimate||th.length);
+      b.innerHTML=`<div class="row" style="justify-content:space-between"><b style="font-size:12.5px">${th.length?`${est>th.length?est+"+":th.length} thư chưa đọc`:"Không có thư chưa đọc ♡"}</b><button class="sm" data-gmo>Mở</button></div>${th.map(t=>`<button class="mw-item" data-gmt="${esc(t.id)}"><b>${esc(t.f)}</b><span>${esc(t.s)}</span><small>${esc(gmWhen(t.d))}</small></button>`).join("")}`;
+      $("[data-gmo]",b).onclick=()=>openMailHub();$$("[data-gmt]",b).forEach(x=>x.onclick=()=>openMailHub(x.dataset.gmt))}
+    catch(e){b.innerHTML=`<div class="row muted" style="font-size:12.5px">${esc(gmErr(e))}</div>`}};
+  draw();const iv=setInterval(draw,5*60000);return {stop(){alive=false;clearInterval(iv)}}}};
+
+/* ---------- nút Gmail ở thanh bên + thanh trên ---------- */
+RAIL_ALL.mail=["Gmail — hộp thư","mail"];TOP_ALL.mail=["Gmail","mail"];
+{const d=UI.dash;if(d){if(d.rail&&!d.rail.order.includes("mail"))d.rail.order.splice(Math.max(0,d.rail.order.indexOf("cal")+1),0,"mail");if(d.top&&!d.top.order.includes("mail"))d.top.order.splice(Math.max(0,d.top.order.indexOf("cal")+1),0,"mail")}}
+const _railAct17=railAct;railAct=function(k,btn){if(k==="mail"){hideTip();closeFly();return openMailHub()}return _railAct17(k,btn)};
+const _topAct17=topAct;topAct=function(k){if(k==="mail")return openMailHub();return _topAct17(k)};
+
+/* ---------- menu tài khoản trong ứng dụng Claude: thêm Gmail ---------- */
+if(!window.SOHOC){accountMenu=async function(anchor){
+  const name=(P.me&&P.me.name)||"Bạn";const [gc,gm]=await Promise.all([gcStatus(),gmStatus()]);const lbl=s=>s==="ok"?`<b style="color:var(--ok)">đã liên kết</b>`:s==="none"?`<b style="color:var(--warn)">chưa thêm</b>`:`<b style="color:var(--warn)">cần kết nối lại</b>`;
+  const m=popMenu(anchor,`<div class="who"><b style="color:var(--ink)">${esc(name)}</b><br>Đăng nhập bằng tài khoản Claude</div><div class="sep"></div>
+    <div class="who">Tài khoản Google (qua trình kết nối của Claude)</div>
+    <button data-a="gc">${ic("cal")}<span style="flex:1">Google Calendar</span>${lbl(gc)}</button>
+    <button data-a="gm">${ic("mail")}<span style="flex:1">Gmail</span>${lbl(gm)}</button>
+    <div class="who" style="font-size:12px">Đổi tài khoản Google: claude.ai → Cài đặt → Trình kết nối.</div><div class="sep"></div>
+    <div class="who">${Store.persistent()?"Sổ học được lưu riêng cho tài khoản của bạn.":"Đang chạy ngoài ứng dụng Claude: dữ liệu chỉ tồn tại trong phiên này."}</div>`);
+  $("[data-a=gc]",m).onclick=()=>gc==="ok"?openCalendarHub():gcConnect();$("[data-a=gm]",m).onclick=()=>openMailHub()}}
+setTimeout(()=>{try{renderRail()}catch(e){}},80);
+
+/* =====================================================================
    BẢN WEB ĐỘC LẬP — cài đặt AI, đăng nhập Google, sao lưu dữ liệu
    ===================================================================== */
 P.local=true;
@@ -3529,22 +3927,60 @@ aiErr=function(e){const c=e&&e.code;const pn=SOHOC.provider()==="claude"?"Claude
   return _aiErr10(e)};
 gcErr=function(e){const c=e&&e.code;
   if(c==="no_client"||c==="server_not_connected")return "Chưa cấu hình Google Client ID — mở Cài đặt (bánh răng) để thêm.";
-  if(c==="needs_reauth")return "Cần đăng nhập Google lại: bấm “Kết nối Google Calendar”.";
+  if(c==="needs_reauth")return "Phiên Google hết hạn — mở menu tài khoản và bấm liên kết lại.";
   if(c==="popup_closed")return "Bạn đã đóng cửa sổ đăng nhập Google.";
-  if(c==="approval_required")return "Bạn chưa cho phép trang dùng Google Calendar.";
+  if(c==="approval_required")return e&&e.message&&!/^approval/.test(e.message)?String(e.message):"Bạn chưa cho phép trang dùng tài khoản Google này.";
   return "Google báo lỗi: "+String(e&&e.message||e).slice(0,160)};
 
+const G_LOGO='<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
+const gAv=a=>a&&a.pic?`<img class="av" src="${esc(a.pic)}" alt="" referrerpolicy="no-referrer">`:`<span class="av">${esc(((a&&(a.name||a.email))||"?")[0].toUpperCase())}</span>`;
+const gAccts=()=>SOHOC.google.accounts();
+const gAct=()=>gAccts().find(a=>a.active)||null;
+async function gDo(fn,ok){if(!SOHOC.clientId()){toast("Cần Google Client ID trước — mở Cài đặt",4000);settingsDialog("google");return false}
+  try{await fn();if(ok)toast(ok);UI.gcCache={};if(UI.view==="cal")renderCalPage();return true}catch(e){toast(gcErr(e),5000);return false}}
 async function accountMenu(anchor){
-  const me=P.me||{};const gc=await gcStatus();const key=SOHOC.hasKey();
-  const m=popMenu(anchor,`<div class="who">${me.name?`<b style="color:var(--ink)">${esc(me.name)}</b><br>Đã đăng nhập bằng Google`:`<b style="color:var(--ink)">Chưa đăng nhập</b><br>Dữ liệu lưu trên trình duyệt này`}</div><div class="sep"></div>
-    ${me.name?`<button data-a="out">${ic("google")}Đăng xuất Google</button>`:`<button data-a="in">${ic("google")}Đăng nhập bằng Google</button>`}
-    <button data-a="gc">${ic("cal")}${gc==="ok"?"Xem lịch học":"Kết nối Google Calendar"}</button>
+  const A=gAccts(),a=gAct();const key=SOHOC.hasKey();const svc=a?a.svc:{};
+  const row=(k,icn,l,on,act)=>`<button data-sv="${k}">${ic(icn)}<span style="flex:1">${l}</span>${on?`<b style="color:var(--ok)">✓ đã liên kết</b>`:`<b style="color:var(--accent)">${act}</b>`}</button>`;
+  const m=popMenu(anchor,`<div class="who">${a?`<div class="who-acc">${gAv(a)}<div style="min-width:0"><b style="color:var(--ink)">${esc(a.name||"Tài khoản Google")}</b><br><span style="font-size:12px">${esc(a.email||"")}</span></div></div>`:`<b style="color:var(--ink)">Chưa đăng nhập</b><br>Dữ liệu lưu trên trình duyệt này`}</div>
+    ${A.filter(x=>!x.active).map(x=>`<button data-sw="${esc(x.id)}">${x.pic?`<img src="${esc(x.pic)}" alt="" referrerpolicy="no-referrer" style="width:18px;height:18px;border-radius:50%">`:ic("user")}<span style="flex:1;overflow:hidden;text-overflow:ellipsis">Chuyển sang ${esc(x.email||x.name)}</span></button>`).join("")}
+    <button data-a="in">${ic("google")}${a?"Thêm tài khoản Google khác":"Đăng nhập bằng Google"}</button><div class="sep"></div>
+    ${a?row("cal","cal","Google Calendar",svc.cal,"Liên kết")+row("mail","mail","Gmail",svc.mail,"Liên kết"):""}
+    ${a&&svc.cal?`<button data-a="gc">${ic("cal")}Xem lịch học</button>`:""}${a&&svc.mail?`<button data-a="gm">${ic("mail")}Mở hộp thư Gmail</button>`:""}
+    <button data-a="man">${ic("user")}Quản lý tài khoản & quyền</button>
     <button data-a="set">${ic("key")}Cài đặt AI (${SOHOC.provider()==="claude"?"Claude":"Gemini"}) ${key?"<span class='muted'>(đã có key)</span>":"<b style='color:var(--warn)'>(chưa có key)</b>"}</button>
-    <button data-a="bak">${ic("dl")}Sao lưu / khôi phục dữ liệu</button>`);
-  const a=$("[data-a=in]",m);if(a)a.onclick=()=>googleSignIn();const o=$("[data-a=out]",m);if(o)o.onclick=()=>{SOHOC.signOut();toast("Đã đăng xuất Google")};
-  $("[data-a=gc]",m).onclick=()=>gc==="ok"?goCal():gcConnect();$("[data-a=set]",m).onclick=()=>settingsDialog();$("[data-a=bak]",m).onclick=()=>settingsDialog("bak");
+    <button data-a="bak">${ic("dl")}Sao lưu / khôi phục dữ liệu</button>${a?`<div class="sep"></div><button data-a="out" style="color:var(--bad)">${ic("close")}Đăng xuất ${esc(a.email||"")}</button>`:""}`);
+  $$("[data-sw]",m).forEach(b=>b.onclick=()=>{SOHOC.google.switchTo(b.dataset.sw);UI.gcCache={};toast("Đã chuyển tài khoản Google");if(UI.view==="cal")renderCalPage()});
+  $("[data-a=in]",m).onclick=()=>loginDialog(!!a);
+  $$("[data-sv]",m).forEach(b=>b.onclick=()=>{const k=b.dataset.sv;if(svc[k])return k==="cal"?goCal():openMailHub();gDo(()=>SOHOC.google.link(k==="cal"?"Google Calendar":"Gmail"),k==="cal"?"Đã liên kết Google Calendar":"Đã liên kết Gmail").then(ok=>{if(ok&&k==="mail")openMailHub()})});
+  const q=(s,f)=>{const b=$(s,m);if(b)b.onclick=f};q("[data-a=gc]",()=>goCal());q("[data-a=gm]",()=>openMailHub());q("[data-a=man]",()=>settingsDialog("google"));
+  q("[data-a=set]",()=>settingsDialog());q("[data-a=bak]",()=>settingsDialog("bak"));q("[data-a=out]",()=>{SOHOC.signOut();UI.gcCache={};toast("Đã đăng xuất")});
 }
-async function googleSignIn(){if(!SOHOC.clientId()){toast("Cần Google Client ID trước — mở Cài đặt",4000);return settingsDialog("google")}try{await SOHOC.getToken();toast("Đã đăng nhập Google");UI.gcCache={};if(UI.view==="cal")renderCalPage()}catch(e){toast(gcErr(e),4500)}}
+/* hộp đăng nhập: chọn tài khoản Google + liên kết dịch vụ trong một lần */
+function loginDialog(add){
+  if(!SOHOC.clientId()){toast("Cần Google Client ID trước — mở Cài đặt",4000);return settingsDialog("google")}
+  const A=gAccts();
+  openModal({title:add?"Thêm tài khoản Google":"Đăng nhập",small:true,body:`<div class="login-card">
+    <p style="margin:0">Đăng nhập bằng tài khoản Google (Gmail cá nhân hoặc tài khoản trường) để đồng bộ lịch học và đọc thư ngay trong Sổ Học.</p>
+    ${A.length&&!add?`<div class="gacc-list">${A.map(x=>`<button type="button" class="gacc${x.active?" on":""}" data-lsw="${esc(x.id)}" style="text-align:left;cursor:pointer">${gAv(x)}<span class="nm">${esc(x.name||x.email)}</span>${x.active?`<span class="tag">Đang dùng</span>`:"<span></span>"}<span class="em">${esc(x.email)}</span></button>`).join("")}</div>`:""}
+    <div class="login-opts"><label><input type="checkbox" class="chk" id="lgCal" checked><span><b>Liên kết Google Calendar</b><small>Xem và thêm lịch học, hạn nộp vào lịch Google</small></span></label>
+      <label><input type="checkbox" class="chk" id="lgMail"><span><b>Liên kết Gmail</b><small>Đọc thư, thêm thư làm nguồn bài học, soạn và gửi thư</small></span></label></div>
+    <button type="button" class="g-btn" id="lgGo">${G_LOGO}<span>${add||A.length?"Chọn tài khoản Google":"Tiếp tục với Google"}</span></button>
+    <p class="muted" style="margin:0;font-size:12.5px">Google sẽ mở cửa sổ để bạn chọn tài khoản và <b>tích các ô cho phép</b>. Quyền truy cập chỉ lưu trong trình duyệt này; bạn có thể gỡ bất cứ lúc nào ở <i>Quản lý tài khoản</i> hoặc tại myaccount.google.com/permissions.</p></div>`,
+    foot:`<div class="grow"></div><button class="pill-btn" data-close>Đóng</button>`});
+  $$("[data-lsw]").forEach(b=>b.onclick=()=>{SOHOC.google.switchTo(b.dataset.lsw);closeDialog();UI.gcCache={};toast("Đang dùng "+(gAct()||{}).email)});
+  $("#lgGo").onclick=async()=>{const want=[];if($("#lgCal").checked)want.push("cal");if($("#lgMail").checked)want.push("mail","send");
+    const ok=await gDo(()=>SOHOC.google.addAccount(want),null);
+    if(ok){closeDialog();const a=gAct();toast(`Đã đăng nhập ${a&&a.email?a.email:"Google"}`)}};
+}
+async function googleSignIn(){return loginDialog(false)}
+function gAcctsHTML(){const A=gAccts();if(!A.length)return `<p class="muted" style="margin:0">Chưa có tài khoản nào trên trình duyệt này.</p>`;
+  return `<div class="gacc-list">${A.map(x=>`<div class="gacc${x.active?" on":""}">${gAv(x)}<span class="nm">${esc(x.name||x.email||"Tài khoản Google")}</span>${x.active?`<span class="tag">Đang dùng</span>`:`<button class="btn" type="button" data-gsw="${esc(x.id)}" style="font-size:12px">Dùng tài khoản này</button>`}<span class="em">${esc(x.email)}${x.fresh?"":" · <i>cần đăng nhập lại khi dùng</i>"}</span>
+    <div class="svc">${x.svc.cal?`<span class="chip ok">${ic("cal")} Calendar ✓</span>`:""}${x.svc.mail?`<span class="chip ok">${ic("mail")} Gmail ✓</span>`:""}${x.active?`${x.svc.cal?`<button class="chip" type="button" data-gun="Google Calendar">Gỡ Calendar</button>`:`<button class="chip" type="button" data-gln="Google Calendar">+ Liên kết Calendar</button>`}${x.svc.mail?`<button class="chip" type="button" data-gun="Gmail">Gỡ Gmail</button>`:`<button class="chip" type="button" data-gln="Gmail">+ Liên kết Gmail</button>`}`:""}<button class="chip" type="button" data-grm="${esc(x.id)}" style="color:var(--bad)">Xóa khỏi máy</button></div></div>`).join("")}</div>`}
+function gAcctsWire(root){const re=()=>{const h=$("#stAccts",root);if(h){h.innerHTML=gAcctsHTML();gAcctsWire(root)}};
+  $$("[data-gsw]",root).forEach(b=>b.onclick=()=>{SOHOC.google.switchTo(b.dataset.gsw);UI.gcCache={};re()});
+  $$("[data-gln]",root).forEach(b=>b.onclick=async()=>{await gDo(()=>SOHOC.google.link(b.dataset.gln),"Đã liên kết "+b.dataset.gln);re()});
+  $$("[data-gun]",root).forEach(b=>b.onclick=()=>{SOHOC.google.unlink(b.dataset.gun);UI.gcCache={};toast("Sổ Học sẽ không dùng "+b.dataset.gun+" của tài khoản này nữa");re()});
+  $$("[data-grm]",root).forEach(b=>b.onclick=()=>{SOHOC.google.remove(b.dataset.grm);UI.gcCache={};toast("Đã xóa tài khoản khỏi máy này và thu hồi quyền");re()})}
 
 function settingsDialog(focus){
   const L=SOHOC.LS;const key=L.get("apiKey","");const mdl=L.get("model",SOHOC.CFG.defaultModel);let pv=SOHOC.provider();const gkey=L.get("geminiKey","");const gm=L.get("gModel",SOHOC.CFG.geminiModel);const gq=L.get("gQuickModel",SOHOC.CFG.geminiQuickModel);const cid=L.get("googleClientId","")||SOHOC.CFG.googleClientId||"";
@@ -3564,10 +4000,13 @@ function settingsDialog(focus){
         <div class="field"><label for="stModel">Mô hình</label><select id="stModel">${[["claude-sonnet-5-5","Claude Sonnet 5.5 — cân bằng (khuyên dùng)"],["claude-opus-5-5","Claude Opus 5.5 — giảng sâu nhất, đắt hơn"],["claude-haiku-5-5","Claude Haiku 5.5 — nhanh, rẻ"]].map(([v,l])=>`<option value="${v}" ${v===mdl?"selected":""}>${l}</option>`).join("")}</select></div></div>
       <p class="muted">Key chỉ lưu trong trình duyệt này và chỉ gửi tới máy chủ của nhà cung cấp AI bạn chọn.</p>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="btn" id="stTest" type="button">${ic("spark")} Thử kết nối</button><span id="stTestOut" class="muted" style="font-size:13px"></span></div></section>
-    <section id="setGoogle"><h4>${ic("google")} Đăng nhập Google & Google Calendar</h4>
-      <p class="muted">Cần một <b>OAuth Client ID</b> loại “Web application” tạo trong Google Cloud Console, với địa chỉ trang này trong mục <i>Authorized JavaScript origins</i>. Xem hướng dẫn trong tệp README.</p>
+    <section id="setGoogle"><h4>${ic("google")} Tài khoản Google · Calendar · Gmail</h4>
+      <div id="stAccts">${gAcctsHTML()}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn" id="stGin" type="button">${ic("google")} ${gAccts().length?"Thêm tài khoản Google":"Đăng nhập bằng Google"}</button></div>
+      <details class="muted" style="font-size:13px"${SOHOC.clientId()?"":" open"}><summary style="cursor:pointer">Google Client ID (cần làm một lần)</summary>
+      <p>Tạo <b>OAuth Client ID</b> loại “Web application” trong Google Cloud Console, thêm địa chỉ trang này vào <i>Authorized JavaScript origins</i>; bật <b>Google Calendar API</b> và <b>Gmail API</b> (APIs &amp; Services → Library); trong <i>OAuth consent screen</i> thêm các tài khoản sẽ đăng nhập vào <i>Test users</i>. Xem README.</p>
       <div class="field"><label for="stCid">Google Client ID</label><input class="input" id="stCid" spellcheck="false" placeholder="xxxxxxxx.apps.googleusercontent.com" value="${esc(cid)}"></div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn" id="stGin" type="button">${ic("google")} ${P.me&&P.me.name?"Đăng nhập lại":"Đăng nhập bằng Google"}</button>${P.me&&P.me.name?`<button class="btn" id="stGout" type="button">Đăng xuất</button>`:""}<span class="muted" style="font-size:12.5px;align-self:center">Địa chỉ trang hiện tại: <code>${esc(location.origin)}</code></span></div></section>
+      <span style="font-size:12.5px">Địa chỉ trang hiện tại: <code>${esc(location.origin)}</code></span></details></section>
     <section id="setBak"><h4>${ic("dl")} Dữ liệu của bạn</h4>
       <p class="muted">Môn học, bài học, tài liệu và cài đặt được lưu trong trình duyệt trên máy này. Hãy sao lưu định kỳ để chuyển sang máy khác hoặc phòng khi xóa dữ liệu trình duyệt.</p>
       <div id="stUse" class="muted" style="font-size:12.5px"></div>
@@ -3578,7 +4017,7 @@ function settingsDialog(focus){
   $$("[data-show]").forEach(b=>b.onclick=()=>{const i=$("#"+b.dataset.show);i.type=i.type==="password"?"text":"password";b.textContent=i.type==="password"?"Hiện":"Ẩn"});
   $("#stGList").onclick=async()=>{const o=$("#stGModels");o.innerHTML=`<span class="spin"></span>`;try{const L2=await SOHOC.listGeminiModels($("#stGKey").value.trim());o.innerHTML=L2.length?L2.map(m=>`<button type="button" class="chip" data-gm="${esc(m.id)}" title="${esc(m.name)}">${esc(m.id)}</button>`).join(""):"Không thấy mô hình nào.";$$("[data-gm]",o).forEach(b=>b.onclick=()=>{$("#stGModel").value=b.dataset.gm;toast("Đã chọn "+b.dataset.gm)})}catch(e){o.innerHTML=`<span style="color:var(--bad)">${esc(aiErr(e))}</span>`}};
     $("#stTest").onclick=async()=>{save();const o=$("#stTestOut");o.textContent="Đang thử…";try{const r=await P.sample("Trả lời đúng một từ: OK",{max:20});o.innerHTML=`<b style="color:var(--ok)">Kết nối được.</b> ${pv==="claude"?"Claude":"Gemini"} (${esc(SOHOC.model(null))}) trả lời: “${esc(r.text.trim().slice(0,40))}”`}catch(e){o.innerHTML=`<b style="color:var(--bad)">Chưa được.</b> ${esc(aiErr(e))}`}};
-  $("#stGin").onclick=async()=>{save();await googleSignIn()};const go=$("#stGout");if(go)go.onclick=()=>{SOHOC.signOut();closeDialog();toast("Đã đăng xuất Google")};
+  $("#stGin").onclick=()=>{save();closeDialog();loginDialog(gAccts().length>0)};gAcctsWire($("#setGoogle"));
   $("#stExp").onclick=async()=>{toast("Đang đóng gói dữ liệu…");try{const b=await SOHOC.exportAll();await P.downloads.save({filename:`so-hoc-sao-luu-${ymd(new Date())}.json`,data:b});toast("Đã tải bản sao lưu")}catch(e){toast("Không sao lưu được: "+e.message)}};
   $("#stImp").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const n=await SOHOC.importAll(f);toast(`Đã khôi phục ${n} mục — đang tải lại trang`);setTimeout(()=>location.reload(),900)}catch(err){toast("Không khôi phục được: "+err.message,4500)}};
   $("#stClr").onclick=()=>{closeDialog();confirmDialog("Xóa toàn bộ dữ liệu trên máy này?","Tất cả môn học, bài học, tài liệu và ghi chú sẽ bị xóa khỏi trình duyệt này. Hãy tải bản sao lưu trước nếu cần.","Xóa hết",async()=>{await SOHOC.clearAll();localStorage.clear();location.reload()})};
@@ -3588,7 +4027,7 @@ function settingsDialog(focus){
 }
 /* lần đầu mở: hướng dẫn ngắn */
 setTimeout(()=>{if(SOHOC.LS.get("welcomed",false))return;SOHOC.LS.set("welcomed",true);
-  openModal({title:"Chào mừng đến Sổ Học Điện Tử",small:true,body:`<div class="form"><p style="margin:0">Trang này chạy hoàn toàn trên trình duyệt của bạn:</p><ul style="margin:0;padding-left:20px;display:grid;gap:6px"><li>Môn học, bài học và tài liệu được <b>lưu trên máy này</b> (có thể sao lưu ra tệp).</li><li>Trợ lý AI dùng <b>API key của bạn</b>: Google AI Studio (Gemini, có gói miễn phí) hoặc Claude — thêm trong Cài đặt.</li><li>Đăng nhập Google để đồng bộ <b>Google Calendar</b> (cần Client ID, xem README).</li></ul></div>`,foot:`<button class="pill-btn" data-close>Để sau</button><div class="grow"></div><button class="pill-btn primary" id="wGo">${ic("key")} Mở Cài đặt</button>`});
+  openModal({title:"Chào mừng đến Sổ Học Điện Tử",small:true,body:`<div class="form"><p style="margin:0">Trang này chạy hoàn toàn trên trình duyệt của bạn:</p><ul style="margin:0;padding-left:20px;display:grid;gap:6px"><li>Môn học, bài học và tài liệu được <b>lưu trên máy này</b> (có thể sao lưu ra tệp).</li><li>Trợ lý AI dùng <b>API key của bạn</b>: Google AI Studio (Gemini, có gói miễn phí) hoặc Claude — thêm trong Cài đặt.</li><li>Đăng nhập bằng <b>tài khoản Google</b> (có thể thêm nhiều tài khoản) để đồng bộ <b>Google Calendar</b> và đọc <b>Gmail</b> (cần Client ID, xem README).</li></ul></div>`,foot:`<button class="pill-btn" data-close>Để sau</button><div class="grow"></div><button class="pill-btn primary" id="wGo">${ic("key")} Mở Cài đặt</button>`});
   $("#wGo").onclick=()=>{closeDialog();settingsDialog()}},1800);
 /* cài đặt như ứng dụng (PWA) */
 if("serviceWorker" in navigator&&location.protocol.startsWith("http"))addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));

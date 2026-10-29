@@ -6,7 +6,7 @@ Sổ học kiểu NotebookLM cho sinh viên Kỹ thuật Điện tử – Máy t
 |---|---|
 | Lưu môn học, bài học, tài liệu | IndexedDB trong trình duyệt của bạn (có sao lưu/khôi phục ra tệp `.json`) |
 | Trợ lý AI, slide, video, quiz, mô hình 3D… | **Google Gemini (AI Studio, có gói miễn phí)** hoặc Claude API, bằng API key của bạn (chỉ lưu trên máy bạn) |
-| Đăng nhập Google, Google Calendar | Google Identity Services + Google Calendar API (cần **OAuth Client ID**) |
+| Đăng nhập Google (nhiều tài khoản), Google Calendar, Gmail | Google Identity Services + Google Calendar API + Gmail API (cần **OAuth Client ID**) |
 | Video YouTube | Phát ngay trong trang (trình phát nhúng youtube-nocookie) |
 | Mở nhanh / dùng khi mạng yếu | Service worker + có thể "Cài đặt như ứng dụng" (PWA) |
 
@@ -46,18 +46,24 @@ python3 -m http.server 8080
 
 Lưu ý bảo mật: key được lưu trong `localStorage` của trình duyệt và gửi thẳng tới máy chủ của nhà cung cấp. Chỉ nhập key trên máy của bạn. Không bao giờ ghi key vào `config.js` hay đưa lên GitHub. Với AI Studio có thể giới hạn key chỉ dùng cho "Generative Language API" trong Google Cloud Console.
 
-## 4. Bật đăng nhập Google & Google Calendar
+## 4. Bật đăng nhập Google (nhiều tài khoản) + Google Calendar + Gmail
 
 1. Vào https://console.cloud.google.com → tạo Project mới.
-2. *APIs & Services → Library* → bật **Google Calendar API**.
-3. *APIs & Services → OAuth consent screen* → User type **External** → điền tên ứng dụng, email → thêm scope `.../auth/calendar.events` → ở mục *Test users* thêm email Google của bạn (ví dụ email sinh viên VGU).
-4. *APIs & Services → Credentials → Create credentials → OAuth client ID* → loại **Web application** → mục **Authorized JavaScript origins** thêm địa chỉ trang, ví dụ `https://ten-cua-ban.netlify.app` và `http://localhost:8080`.
+2. *APIs & Services → Library* → bật **Google Calendar API** và **Gmail API**.
+3. *APIs & Services → OAuth consent screen* (Google Auth Platform) → User type **External** → điền tên ứng dụng, email.
+   - *Data access / Scopes* → thêm: `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile`, `.../auth/calendar.events`, `.../auth/gmail.readonly`, `.../auth/gmail.compose`.
+   - *Audience / Test users* → thêm **mọi tài khoản Google sẽ đăng nhập** (Gmail cá nhân, email sinh viên…). Ở chế độ thử nghiệm tối đa 100 người; tài khoản chưa có trong danh sách sẽ bị Google chặn.
+4. *Credentials → Create credentials → OAuth client ID* → loại **Web application** → **Authorized JavaScript origins** thêm địa chỉ trang, ví dụ `https://ten-cua-ban.netlify.app` và `http://localhost:8080`.
 5. Sao chép **Client ID** (dạng `xxxx.apps.googleusercontent.com`) và:
-   - dán vào trang: *Cài đặt → Google Client ID*, hoặc
+   - dán vào trang: *Cài đặt → Tài khoản Google → Google Client ID*, hoặc
    - ghi vào `config.js` (`googleClientId: "..."`) để ai mở trang cũng dùng được.
-6. Bấm **Đăng nhập bằng Google**. Lần đầu Google hiện cảnh báo "ứng dụng chưa được xác minh" vì đang ở chế độ thử nghiệm → *Nâng cao → Tiếp tục*.
+6. Bấm ảnh đại diện / **Đăng nhập** ở thanh bên → tích **Liên kết Google Calendar**, **Liên kết Gmail** → *Tiếp tục với Google* → chọn tài khoản → **tích đủ các ô cho phép** trong cửa sổ Google. Lần đầu Google báo "ứng dụng chưa được xác minh" vì đang thử nghiệm → *Nâng cao → Tiếp tục*.
 
-Client ID không phải mật khẩu nên để trong `config.js` là bình thường. Nếu tài khoản trường (Google Workspace của VGU) chặn ứng dụng bên ngoài, hãy dùng tài khoản Gmail cá nhân hoặc nhờ quản trị cho phép.
+Dùng nhiều tài khoản: menu tài khoản → *Thêm tài khoản Google khác*, rồi *Chuyển sang …* để đổi; *Quản lý tài khoản & quyền* để liên kết / gỡ Calendar, Gmail hoặc xóa tài khoản khỏi máy (thu hồi quyền).
+
+Gmail trong Sổ Học: nút **Gmail** ở thanh trên / thanh bên → tìm thư (lọc nhanh: chưa đọc, có tệp, VGU · Moodle, hạn nộp), đọc thư, **Thêm làm nguồn bài học**, **AI tóm tắt** (việc cần làm + hạn), **Trả lời / Soạn thư** (AI viết nháp, chỉ gửi khi bạn bấm Gửi). Widget *Hộp thư Gmail* hiện thư chưa đọc trên trang chủ.
+
+Mã truy cập Google chỉ lưu trong trình duyệt này (hết hạn sau khoảng 1 giờ; khi cần Sổ Học sẽ nhờ bạn bấm kết nối lại). Client ID không phải mật khẩu nên để trong `config.js` là bình thường. Nếu tài khoản trường (Google Workspace của VGU) chặn ứng dụng bên ngoài, hãy dùng Gmail cá nhân hoặc nhờ quản trị cho phép.
 
 ## 5. Cập nhật phiên bản mới lên Netlify
 

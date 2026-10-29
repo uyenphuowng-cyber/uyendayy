@@ -1,7 +1,7 @@
 /* Sổ Học Điện Tử — nền tảng chạy độc lập (không cần Claude.ai)
    Cung cấp cùng giao diện như runtime của artifact:
    db (IndexedDB trên máy), user, sample (Claude API bằng API key của bạn),
-   mcp (Google Calendar qua đăng nhập Google), assets, downloads, permissions. */
+   mcp (Google Calendar + Gmail qua đăng nhập Google, nhiều tài khoản), assets, downloads, permissions. */
 (function(){
 "use strict";
 const CFG=Object.assign({googleClientId:"",provider:"gemini",geminiModel:"gemini-3.8-flash",geminiQuickModel:"gemini-3.5-flash-lite",defaultModel:"claude-sonnet-5-5",quickModel:"claude-haiku-5-5"},window.SOHOC_CONFIG||{});
@@ -87,9 +87,12 @@ async function callGemini(input,o){
   if(contents.length&&contents[0].role!=="user")contents.unshift({role:"user",parts:[{text:"(bắt đầu)"}]});
   if(o.images&&o.images.length){const first=contents.findIndex(c=>c.role==="user");const parts=[];for(const b of o.images.slice(0,6)){const x=await blobToB64(b);parts.push({inline_data:{mime_type:x.mime,data:x.data}})}contents[first].parts=[...parts,...contents[first].parts]}
   const gc={maxOutputTokens:o.max||16384};if(o.json)gc.responseMimeType="application/json";
+  const md=model(o.modelTier,"gemini");const sp=LS.get("speed","balanced");
+  if(/gemini-(3|4)/i.test(md)&&!LS.get("noThink:"+md,false)&&(sp==="fast"||(sp==="balanced"&&(o.json||o.fast)))&&o.fast!==false)gc.thinkingConfig={thinkingLevel:"LOW"};
   let r;try{r=await _fetch(`${GEM}/models/${encodeURIComponent(model(o.modelTier,"gemini"))}:streamGenerateContent?alt=sse`,{method:"POST",signal:o.signal,headers:{"content-type":"application/json","x-goog-api-key":key},body:JSON.stringify({contents,generationConfig:gc})})}
   catch(e){if(e&&e.name==="AbortError")throw err("cancelled","Đã dừng");throw err("network","Không kết nối được tới Google AI Studio")}
-  if(!r.ok){let j={};try{j=await r.json()}catch(e){}if(Array.isArray(j))j=j[0]||{};throw gemErr(r.status,j)}
+  if(!r.ok){let j={};try{j=await r.json()}catch(e){}if(Array.isArray(j))j=j[0]||{};
+    if(r.status===400&&gc.thinkingConfig&&/think/i.test(JSON.stringify(j))){LS.set("noThink:"+md,true);return callGemini(input,{...o,fast:false})}throw gemErr(r.status,j)}
   let text="",stop=null,blocked=null;
   try{await sse(r,ev=>{if(ev.error)throw gemErr(ev.error.code||500,ev);if(ev.promptFeedback&&ev.promptFeedback.blockReason)blocked=ev.promptFeedback.blockReason;const c=(ev.candidates||[])[0];if(!c)return;
       const parts=(c.content&&c.content.parts)||[];const add=parts.filter(p=>p.text&&!p.thought).map(p=>p.text).join("");if(add){text+=add;if(o.onText)o.onText({text})}if(c.finishReason&&c.finishReason!=="FINISH_REASON_UNSPECIFIED")stop=c.finishReason})}
@@ -103,35 +106,90 @@ function parseJSON(t){let s=String(t||"").trim().replace(/^```(?:json)?\s*/i,"")
 const sample=(input,o)=>call(input,o||{});
 sample.json=async(prompt,o={})=>{const r=await call(prompt+"\n\nCHỈ trả lời bằng đúng một đối tượng JSON hợp lệ, không có chữ hay ``` nào khác.",{...o,json:true,max:provider()==="claude"?16000:32768});return parseJSON(r.text)};
 
-/* ---------------- Google: đăng nhập + Google Calendar ---------------- */
-const GC="Google Calendar";const SCOPES="openid email profile https://www.googleapis.com/auth/calendar.events";
+/* ---------------- Google: nhiều tài khoản + Google Calendar + Gmail ----------------
+   Mỗi tài khoản giữ token riêng (chỉ trên trình duyệt này). Dịch vụ được cấp quyền dần
+   (đăng nhập trước, liên kết Calendar / Gmail khi cần). */
+const GC="Google Calendar",GM="Gmail";
+const SC={base:"openid email profile",cal:"https://www.googleapis.com/auth/calendar.events",mail:"https://www.googleapis.com/auth/gmail.readonly",send:"https://www.googleapis.com/auth/gmail.compose"};
+const SVC_OF={[GC]:["cal"],[GM]:["mail","send"]};
 const clientId=()=>LS.get("googleClientId","")||CFG.googleClientId||"";
-let tok=LS.get("gtok",null);
-const tokOk=()=>tok&&tok.exp>Date.now()+60000;
+let accts=LS.get("gaccts",null),act=LS.get("gActive",null);
+if(!Array.isArray(accts)){accts=[];const ot=LS.get("gtok",null),me=LS.get("me",null);if(ot&&me&&me.name){accts.push({id:"old",name:me.name,email:"",pic:me.avatarUrl||"",svc:{cal:true},tok:ot});act="old"}LS.del("gtok")}
+const cur=()=>accts.find(a=>a.id===act)||accts[0]||null;
+const tokOk=a=>!!(a&&a.tok&&a.tok.exp>Date.now()+60000);
+function saveA(){LS.set("gaccts",accts);const c=cur();act=c?c.id:null;LS.set("gActive",act);LS.set("me",c?{name:c.name||c.email||"",avatarUrl:c.pic||""}:{name:"",avatarUrl:""});window.dispatchEvent(new CustomEvent("sohoc:me"))}
 function loadGIS(){return window.google&&google.accounts&&google.accounts.oauth2?Promise.resolve():new Promise((res,rej)=>{const s=document.createElement("script");s.src="https://accounts.google.com/gsi/client";s.async=true;s.onload=()=>res();s.onerror=()=>rej(err("network","Không tải được dịch vụ đăng nhập Google"));document.head.appendChild(s)})}
-async function getToken(interactive){if(tokOk())return tok.t;const cid=clientId();if(!cid)throw err("no_client","Chưa cấu hình Google Client ID");if(!interactive)throw err("needs_reauth","Cần đăng nhập Google lại");
-  await loadGIS();return new Promise((res,rej)=>{const c=google.accounts.oauth2.initTokenClient({client_id:cid,scope:SCOPES,callback:async r=>{if(r.error){rej(err(r.error==="access_denied"?"approval_required":"auth_error",r.error_description||r.error));return}
-      tok={t:r.access_token,exp:Date.now()+(+r.expires_in||3600)*1000};LS.set("gtok",tok);LS.set("gLinked",true);
-      try{const u=await _fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+tok.t}}).then(x=>x.json());LS.set("me",{name:u.name||u.given_name||"",avatarUrl:u.picture||""});window.dispatchEvent(new CustomEvent("sohoc:me"))}catch(e){}
-      res(tok.t)},error_callback:e=>rej(err(e&&e.type==="popup_closed"?"popup_closed":"auth_error",e&&e.message||"Đăng nhập Google bị hủy"))});c.requestAccessToken({prompt:LS.get("gLinked",false)?"":"consent"})})}
-async function gapi(url,opt={},retry=true){const t=await getToken(false);const r=await _fetch(url,{...opt,headers:{...(opt.headers||{}),Authorization:"Bearer "+t,"content-type":"application/json"}});
-  if(r.status===401){tok=null;LS.del("gtok");throw err("needs_reauth","Phiên Google hết hạn")}
+/* mở cửa sổ Google: add=true → chọn/thêm tài khoản khác; svc = dịch vụ muốn liên kết thêm */
+async function auth({svc=[],add=false,acct=null}={}){
+  const cid=clientId();if(!cid)throw err("no_client","Chưa cấu hình Google Client ID");await loadGIS();
+  const a0=add?null:(acct||cur());const want=new Set(svc);if(a0&&a0.svc)Object.keys(a0.svc).forEach(k=>{if(a0.svc[k])want.add(k)});
+  const scope=[SC.base,...[...want].map(k=>SC[k])].join(" ");
+  return new Promise((res,rej)=>{const c=google.accounts.oauth2.initTokenClient({client_id:cid,scope,include_granted_scopes:true,...(a0&&a0.email?{hint:a0.email}:{}),
+    callback:async r=>{if(r.error){rej(err(r.error==="access_denied"?"approval_required":"auth_error",r.error_description||r.error));return}
+      let u={};try{u=await _fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+r.access_token}}).then(x=>x.json())}catch(e){}
+      const id=u.sub||(a0&&a0.id)||("g"+Date.now());let a=accts.find(x=>x.id===id)||(a0&&a0.id==="old"?a0:null);
+      if(!a){a={id,svc:{}};accts.push(a)}a.id=id;a.name=u.name||u.given_name||a.name||"";a.email=u.email||a.email||"";a.pic=u.picture||a.pic||"";
+      const has=k=>{try{return google.accounts.oauth2.hasGrantedAllScopes(r,SC[k])}catch(e){return String(r.scope||"").includes(SC[k])}};
+      a.svc={cal:has("cal"),mail:has("mail"),send:has("send")};a.tok={t:r.access_token,exp:Date.now()+(+r.expires_in||3600)*1000};
+      act=a.id;saveA();const miss=svc.filter(k=>!a.svc[k]);if(miss.length){rej(err("approval_required","Bạn chưa tích ô cho phép "+miss.map(k=>({cal:"Google Calendar",mail:"đọc Gmail",send:"soạn/gửi Gmail"})[k]).join(", ")));return}res(a)},
+    error_callback:e=>rej(err(e&&e.type==="popup_closed"?"popup_closed":"auth_error",e&&e.message||"Đăng nhập Google bị hủy"))});
+    c.requestAccessToken({prompt:add?"select_account consent":(a0&&a0.tok?"":"consent")})})}
+async function getToken(interactive,svc){const a=cur();if(a&&tokOk(a)&&(!svc||svc.every(k=>a.svc&&a.svc[k])))return a.tok.t;if(!clientId())throw err("no_client","Chưa cấu hình Google Client ID");
+  if(!interactive)throw err("needs_reauth","Cần đăng nhập Google lại");return (await auth({svc:svc||[]})).tok.t}
+async function gapi(url,opt={}){const t=await getToken(false);const r=await _fetch(url,{...opt,headers:{...(opt.headers||{}),Authorization:"Bearer "+t,...(opt.body?{"content-type":"application/json"}:{})}});
+  if(r.status===401){const a=cur();if(a){a.tok=null;saveA()}throw err("needs_reauth","Phiên Google hết hạn")}
+  if(r.status===403){const j=await r.json().catch(()=>({}));const m=(j.error&&j.error.message)||"";throw err(/insufficient|scope/i.test(m)?"approval_required":"tool_error",/has not been used|disabled/i.test(m)?"Chưa bật API này trong Google Cloud Console (APIs & Services → Library).":m||"Không có quyền")}
   const j=await r.json().catch(()=>({}));if(!r.ok)throw err("tool_error",(j.error&&j.error.message)||("HTTP "+r.status));return j}
 const iso=s=>{const d=new Date(s);return isNaN(d)?s:d.toISOString()};
+/* ---- Gmail REST → cùng dạng kết quả với trình kết nối Gmail của Claude ---- */
+const GMU="https://gmail.googleapis.com/gmail/v1/users/me/";
+const b64d=s=>{try{const bin=atob(String(s).replace(/-/g,"+").replace(/_/g,"/"));return new TextDecoder().decode(Uint8Array.from(bin,c=>c.charCodeAt(0)))}catch(e){return ""}};
+const b64e=s=>{const b=new TextEncoder().encode(s);let bin="";b.forEach(x=>bin+=String.fromCharCode(x));return btoa(bin).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")};
+const hdr=(m,n)=>{const h=((m.payload&&m.payload.headers)||[]).find(x=>x.name.toLowerCase()===n.toLowerCase());return h?h.value:""};
+const addrs=v=>String(v||"").split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(x=>x.trim()).filter(Boolean);
+function html2text(h){const d=new DOMParser().parseFromString(String(h),"text/html");d.querySelectorAll("script,style").forEach(x=>x.remove());d.querySelectorAll("br").forEach(x=>x.replaceWith("\n"));d.querySelectorAll("p,div,tr,li,h1,h2,h3").forEach(x=>x.append("\n"));return (d.body.textContent||"").replace(/\n{3,}/g,"\n\n").trim()}
+function bodyOf(p){let txt="",html="";const atts=[];(function walk(x){if(!x)return;if(x.filename&&x.body&&(x.body.attachmentId||x.body.size)){atts.push({filename:x.filename,mimeType:x.mimeType,size:x.body.size});return}
+  if(x.mimeType==="text/plain"&&x.body&&x.body.data&&!txt)txt=b64d(x.body.data);else if(x.mimeType==="text/html"&&x.body&&x.body.data&&!html)html=b64d(x.body.data);(x.parts||[]).forEach(walk)})(p);
+  return {text:txt||(html?html2text(html):""),atts}}
+function gmMsg(m,full){const o={id:m.id,threadId:m.threadId,subject:hdr(m,"Subject"),sender:hdr(m,"From"),toRecipients:addrs(hdr(m,"To")),ccRecipients:addrs(hdr(m,"Cc")),date:m.internalDate?new Date(+m.internalDate).toISOString():hdr(m,"Date"),snippet:b64dSafe(m.snippet),labelIds:m.labelIds||[],viewUrl:"https://mail.google.com/mail/#all/"+m.threadId};
+  if(full){const b=bodyOf(m.payload);o.plaintextBody=b.text;o.attachments=b.atts}return o}
+function b64dSafe(s){const t=document.createElement("textarea");t.innerHTML=String(s||"");return t.value}
+function mime({to=[],cc=[],bcc=[],subject="",body=""}){const enc=s=>/[^\x20-\x7e]/.test(s)?"=?UTF-8?B?"+btoa(String.fromCharCode(...new TextEncoder().encode(s)))+"?=":s;
+  const h=[to.length?"To: "+to.join(", "):"",cc.length?"Cc: "+cc.join(", "):"",bcc.length?"Bcc: "+bcc.join(", "):"","Subject: "+enc(subject),"MIME-Version: 1.0","Content-Type: text/plain; charset=UTF-8","Content-Transfer-Encoding: base64"].filter(Boolean);
+  const bb=btoa(String.fromCharCode(...new TextEncoder().encode(body))).replace(/.{76}/g,"$&\r\n");return b64e(h.join("\r\n")+"\r\n\r\n"+bb)}
+const gmail={
+  async search_threads(a){const p=new URLSearchParams({maxResults:String(Math.min(50,a.pageSize||20))});if(a.query)p.set("q",a.query);if(a.pageToken)p.set("pageToken",a.pageToken);if(a.includeTrash)p.set("includeSpamTrash","true");
+    const j=await gapi(GMU+"threads?"+p);const meta=a.view==="THREAD_VIEW_METADATA_ONLY";
+    const threads=await Promise.all((j.threads||[]).map(async t=>{const q=new URLSearchParams({format:"metadata"});["Subject","From","To","Cc","Date"].forEach(h=>q.append("metadataHeaders",h));
+      const d=await gapi(GMU+"threads/"+t.id+"?"+q);const ms=(d.messages||[]).map(m=>gmMsg(m,false));if(meta)ms.forEach(m=>{delete m.subject;delete m.snippet});return {id:t.id,messageCount:ms.length,viewUrl:"https://mail.google.com/mail/#all/"+t.id,messages:ms.slice(0,5)}}));
+    return {threads,nextPageToken:j.nextPageToken,resultCountEstimate:String(j.resultSizeEstimate||threads.length)}},
+  async get_thread(a){const d=await gapi(GMU+"threads/"+encodeURIComponent(a.threadId)+"?format=full");return {id:d.id,viewUrl:"https://mail.google.com/mail/#all/"+d.id,messages:(d.messages||[]).map(m=>gmMsg(m,a.messageFormat!=="MINIMAL"))}},
+  async send_message(a){await getToken(false,["send"]).catch(()=>getToken(true,["send"]));const body={raw:mime(a)};if(a.replyThreadId)body.threadId=a.replyThreadId;return await gapi(GMU+"messages/send",{method:"POST",body:JSON.stringify(body)})},
+  async create_draft(a){await getToken(false,["send"]).catch(()=>getToken(true,["send"]));const d=await gapi(GMU+"drafts",{method:"POST",body:JSON.stringify({message:{raw:mime(a)}})});return {id:d.id,threadId:d.message&&d.message.threadId,viewUrl:"https://mail.google.com/mail/#drafts"}}};
 const mcp={
-  async listTools(){if(!clientId())return{servers:[]};return{servers:[{server:GC,tools:["list_events","create_event"],authStatus:tokOk()?"ok":"needs_reauth"}]}},
+  async listTools(){const a=cur();if(!clientId()||!a)return{servers:[]};const st=tokOk(a)?"ok":"needs_reauth";const s=[];
+    if(a.svc&&a.svc.cal)s.push({server:GC,tools:["list_events","create_event"],authStatus:st});if(a.svc&&a.svc.mail)s.push({server:GM,tools:["search_threads","get_thread",...(a.svc.send?["create_draft","send_message"]:[])],authStatus:st});return{servers:s}},
   async describeTool(){return{}},
-  async callTool(server,tool,a={}){if(server!==GC)throw err("server_not_connected");
-    if(tool==="list_events"){const p=new URLSearchParams({singleEvents:"true",orderBy:"startTime",maxResults:String(Math.min(250,a.pageSize||100))});if(a.startTime)p.set("timeMin",iso(a.startTime));if(a.endTime)p.set("timeMax",iso(a.endTime));
-      const j=await gapi("https://www.googleapis.com/calendar/v3/calendars/primary/events?"+p);return{payload:{events:j.items||[]}}}
-    if(tool==="create_event"){const tz=Intl.DateTimeFormat().resolvedOptions().timeZone;const body={summary:a.summary,description:a.description||"",start:{dateTime:iso(a.startTime),timeZone:tz},end:{dateTime:iso(a.endTime),timeZone:tz},reminders:{useDefault:a.useDefaultReminders!==false}};
-      const j=await gapi("https://www.googleapis.com/calendar/v3/calendars/primary/events",{method:"POST",body:JSON.stringify(body)});return{payload:j}}
+  async callTool(server,tool,a={}){const A=cur();
+    if(server===GC){if(!A||!A.svc||!A.svc.cal)throw err("server_not_connected");
+      if(tool==="list_events"){const p=new URLSearchParams({singleEvents:"true",orderBy:"startTime",maxResults:String(Math.min(250,a.pageSize||100))});if(a.startTime)p.set("timeMin",iso(a.startTime));if(a.endTime)p.set("timeMax",iso(a.endTime));
+        const j=await gapi("https://www.googleapis.com/calendar/v3/calendars/primary/events?"+p);return{payload:{events:j.items||[]}}}
+      if(tool==="create_event"){const tz=Intl.DateTimeFormat().resolvedOptions().timeZone;const body={summary:a.summary,description:a.description||"",start:{dateTime:iso(a.startTime),timeZone:tz},end:{dateTime:iso(a.endTime),timeZone:tz},reminders:{useDefault:a.useDefaultReminders!==false}};
+        const j=await gapi("https://www.googleapis.com/calendar/v3/calendars/primary/events",{method:"POST",body:JSON.stringify(body)});return{payload:j}}}
+    if(server===GM){if(!A||!A.svc||!A.svc.mail)throw err("server_not_connected");if(gmail[tool])return{payload:await gmail[tool](a)}}
+    if(server!==GC&&server!==GM)throw err("server_not_connected");
     throw err("tool_error","Công cụ không hỗ trợ: "+tool)}};
-const permissions={async request(list){if((list||[]).some(x=>String(x).startsWith("mcp:")))await getToken(true);return true}};
+const permissions={async request(list){const svc=[];(list||[]).forEach(x=>{const s=String(x);if(s.startsWith("mcp:"))(SVC_OF[s.slice(4)]||[]).forEach(k=>svc.push(k))});if(svc.length){const a=cur();if(!(a&&tokOk(a)&&svc.every(k=>a.svc&&a.svc[k])))await auth({svc})}return true},async state(){return {}}};
+const google_={accounts:()=>accts.map(a=>({id:a.id,name:a.name,email:a.email,pic:a.pic,svc:{...(a.svc||{})},active:a.id===(cur()&&cur().id),fresh:tokOk(a)})),
+  signIn:()=>auth({}),addAccount:svc=>auth({add:true,svc:svc||[]}),link:k=>auth({svc:SVC_OF[k]||[k]}),
+  unlink(k){const a=cur();if(!a)return;(SVC_OF[k]||[k]).forEach(s=>{if(a.svc)a.svc[s]=false});saveA()},
+  switchTo(id){if(accts.some(a=>a.id===id)){act=id;saveA()}},
+  remove(id){const a=accts.find(x=>x.id===id);if(!a)return;try{if(a.tok&&a.tok.t&&window.google&&google.accounts.oauth2)google.accounts.oauth2.revoke(a.tok.t,()=>{})}catch(e){}accts=accts.filter(x=>x!==a);if(act===id)act=accts[0]?accts[0].id:null;saveA()},
+  async reconnect(){return auth({})}};
 
 /* ---------------- sao lưu / khôi phục / dọn dữ liệu ---------------- */
 const b64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(b)});
-window.SOHOC={CFG,LS,getToken:()=>getToken(true),signOut(){const t=tok&&tok.t;tok=null;LS.del("gtok");LS.del("gLinked");LS.set("me",{name:"",avatarUrl:""});try{if(t&&window.google&&google.accounts.oauth2)google.accounts.oauth2.revoke(t,()=>{})}catch(e){}window.dispatchEvent(new CustomEvent("sohoc:me"))},
+window.SOHOC={CFG,LS,getToken:()=>getToken(true),google:google_,signOut(){const a=cur();if(a)google_.remove(a.id)},
   hasKey:()=>!!apiKey(),provider,model,listGeminiModels,clientId,
   async exportAll(){await load();const out={app:"so-hoc-dien-tu",v:1,exported:new Date().toISOString(),docs:Object.fromEntries(docs),assets:{}};
     try{const d=await getDB();await new Promise((res,rej)=>{const rq=d.transaction("assets").objectStore("assets").openCursor();const pend=[];rq.onsuccess=()=>{const c=rq.result;if(c){pend.push(b64(c.value).then(u=>{out.assets[c.key]=u}));c.continue()}else Promise.all(pend).then(res,rej)};rq.onerror=()=>rej(rq.error)})}catch(e){}
