@@ -69,11 +69,23 @@ Nếu đã đưa trang lên bằng Netlify Drop: vào https://app.netlify.com �
 - Xóa dữ liệu duyệt web (cookie, dữ liệu trang) sẽ xóa sổ học → hãy sao lưu định kỳ.
 - Nhập tài liệu Moodle: trên Moodle VGU chọn *Download folder* (tệp ZIP) rồi thả vào ô **Thêm nguồn (+)**.
 
-## 7. Cấu trúc tệp
+## 7. Bản nâng cấp v12: kéo đổi kích thước, nhạc từ link, cài như ứng dụng
+
+- **Kéo để đổi kích thước** (kích thước được lưu lại):
+  - Khối trang chủ: rê chuột vào khối, kéo **cạnh phải** để đổi độ rộng (12 nấc), **cạnh dưới** để đổi chiều cao, **góc dưới phải** để đổi cả hai. Bấm đúp vào tay nắm để về mặc định. Dùng được phím ← → / ↑ ↓ khi tay nắm đang được chọn.
+  - Cột các trang (môn học, lịch học, phòng lab, báo cáo, studio…): kéo vạch giữa hai cột. Trang bài học vẫn dùng thanh kéo sẵn có.
+  - Bảng bên trái (Sổ học của tôi, Giao diện…): kéo mép phải.
+  - Hộp thoại và widget nổi: kéo góc dưới phải.
+- **Nhạc từ link:** kéo một link (YouTube, YouTube Music, SoundCloud, Spotify, tệp .mp3/.m4a/.ogg, Google Drive, Dropbox) hoặc tệp nhạc thả vào nút loa trên cùng — khi đang kéo sẽ hiện ô “Thả vào đây để phát nhạc”. Cũng có thể dán link vào ô **Link nhạc** trong bảng âm thanh, hoặc bấm Ctrl+V ở trang chủ. Trình phát mini có bài trước/tiếp, lặp 1 bài hoặc phát lần lượt, âm lượng; kéo thanh tiêu đề để di chuyển, kéo góc để phóng to.
+  - YouTube/SoundCloud phát qua trình phát nhúng của chính họ; Spotify chỉ phát bằng nút ▶ trong khung (chưa đăng nhập Spotify thì nghe 30 giây).
+- **Cài như ứng dụng:** trên Chrome/Edge (máy tính, Android) có nút **Cài ứng dụng** ở thanh trên cùng. iPhone/iPad: Safari → Chia sẻ → *Thêm vào MH chính*. Ứng dụng có lối tắt (Bài học mới, Lịch học, Nhạc), nhận link được chia sẻ từ app khác (Android), và hiện số bài tập cần làm trên biểu tượng.
+
+## 8. Cấu trúc tệp
 
 ```
 index.html            khung trang
 app.js                toàn bộ giao diện và tính năng
+app-plus.js / .css    v12: kéo đổi kích thước, nhạc từ link, cài ứng dụng
 platform.js           lưu trữ IndexedDB, Claude API, Google, tải tệp
 config.js             cấu hình (Google Client ID, mô hình mặc định)
 sw.js                 service worker (mở nhanh, dùng khi mất mạng)
